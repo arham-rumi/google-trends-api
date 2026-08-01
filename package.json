@@ -1,0 +1,68 @@
+{
+  "name": "@arham-rumi/google-trends-api",
+  "version": "0.1.0",
+  "description": "Modern, typed, unofficial Google Trends client for Node.js.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arham-rumi/google-trends-api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/arham-rumi/google-trends-api/issues"
+  },
+  "homepage": "https://github.com/arham-rumi/google-trends-api#readme",
+  "keywords": [
+    "google-trends",
+    "trends",
+    "typescript",
+    "analytics",
+    "search"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package:check": "npm run build && publint --pack npm && attw --pack .",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run package:check",
+    "prepublishOnly": "npm run check"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.13.3",
+    "eslint": "^10.8.0",
+    "prettier": "^3.9.6",
+    "publint": "^0.3.22",
+    "tsdown": "^0.22.14",
+    "typescript": "~6.0.0",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  }
+}
