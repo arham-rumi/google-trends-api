@@ -33,6 +33,12 @@ export type {
 export type { GoogleTrendsProperty } from './google/constants.js';
 
 export type {
+  AutocompleteOptions,
+  AutocompleteResult,
+  AutocompleteSuggestion,
+} from './google/autocomplete.js';
+
+export type {
   TrendingNowItem,
   TrendingNowNewsItem,
   TrendingNowOptions,

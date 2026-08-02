@@ -9,6 +9,11 @@ export const GOOGLE_XSSI_PREFIX = ")]}'," as const;
 export const GOOGLE_EXPLORE_PATH = '/trends/api/explore' as const;
 
 /**
+ * Internal Google Trends endpoint used for term and topic suggestions.
+ */
+export const GOOGLE_AUTOCOMPLETE_PATH = '/trends/api/autocomplete/' as const;
+
+/**
  * Internal Google Trends endpoint used by the time-series widget.
  */
 export const GOOGLE_INTEREST_OVER_TIME_PATH = '/trends/api/widgetdata/multiline' as const;

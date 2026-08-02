@@ -1,4 +1,9 @@
 import {
+  fetchAutocomplete,
+  type AutocompleteOptions,
+  type AutocompleteResult,
+} from './google/autocomplete.js';
+import {
   fetchInterestByRegion,
   type InterestByRegionOptions,
   type InterestByRegionResult,
@@ -151,6 +156,16 @@ export class GoogleTrendsClient {
       ...input,
       locale: this.options.locale,
       timezone: this.options.timezone,
+    });
+  }
+
+  /** Returns Google Trends search-term and topic suggestions. */
+  public autocomplete(input: AutocompleteOptions): Promise<AutocompleteResult> {
+    input.signal?.throwIfAborted();
+
+    return fetchAutocomplete(this.#session, {
+      ...input,
+      locale: this.options.locale,
     });
   }
 
