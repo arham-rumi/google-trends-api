@@ -4,7 +4,8 @@ export type GoogleTrendsErrorCode =
   | 'REQUEST_TIMEOUT'
   | 'REQUEST_ABORTED'
   | 'NETWORK_ERROR'
-  | 'INVALID_RESPONSE';
+  | 'INVALID_RESPONSE'
+  | 'WIDGET_NOT_FOUND';
 
 export class GoogleTrendsError extends Error {
   public readonly code: GoogleTrendsErrorCode;
@@ -96,5 +97,17 @@ export class InvalidResponseError extends GoogleTrendsError {
     super(`The response from ${url} could not be parsed.`, 'INVALID_RESPONSE', cause);
 
     this.url = url;
+  }
+}
+
+export class WidgetNotFoundError extends GoogleTrendsError {
+  public readonly widgetId: string;
+  public readonly availableWidgetIds: readonly string[];
+
+  public constructor(widgetId: string, availableWidgetIds: readonly string[]) {
+    super(`Google Trends did not return the required ${widgetId} widget.`, 'WIDGET_NOT_FOUND');
+
+    this.widgetId = widgetId;
+    this.availableWidgetIds = [...availableWidgetIds];
   }
 }

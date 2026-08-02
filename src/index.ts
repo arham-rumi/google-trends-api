@@ -8,6 +8,7 @@ export {
   RateLimitError,
   RequestAbortedError,
   RequestTimeoutError,
+  WidgetNotFoundError,
 } from './errors.js';
 
 export type { GoogleTrendsErrorCode } from './errors.js';
