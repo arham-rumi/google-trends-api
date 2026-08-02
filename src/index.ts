@@ -14,6 +14,15 @@ export {
 export type { GoogleTrendsErrorCode } from './errors.js';
 
 export type {
+  InterestByRegionCoordinates,
+  InterestByRegionOptions,
+  InterestByRegionPoint,
+  InterestByRegionResolution,
+  InterestByRegionResult,
+  InterestByRegionValue,
+} from './google/interest-by-region.js';
+
+export type {
   InterestOverTimeAverage,
   InterestOverTimeOptions,
   InterestOverTimePoint,

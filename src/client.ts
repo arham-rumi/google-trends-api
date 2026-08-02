@@ -1,4 +1,9 @@
 import {
+  fetchInterestByRegion,
+  type InterestByRegionOptions,
+  type InterestByRegionResult,
+} from './google/interest-by-region.js';
+import {
   fetchInterestOverTime,
   type InterestOverTimeOptions,
   type InterestOverTimeResult,
@@ -99,6 +104,19 @@ export class GoogleTrendsClient {
     input.signal?.throwIfAborted();
 
     return fetchInterestOverTime(this.#session, {
+      ...input,
+      locale: this.options.locale,
+      timezone: this.options.timezone,
+    });
+  }
+
+  /** Returns normalized Google Trends interest values by geographic area. */
+  public async interestByRegion(input: InterestByRegionOptions): Promise<InterestByRegionResult> {
+    input.signal?.throwIfAborted();
+    await this.#ensureWarmup();
+    input.signal?.throwIfAborted();
+
+    return fetchInterestByRegion(this.#session, {
       ...input,
       locale: this.options.locale,
       timezone: this.options.timezone,

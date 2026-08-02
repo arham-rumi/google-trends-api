@@ -19,6 +19,11 @@ export const GOOGLE_INTEREST_OVER_TIME_PATH = '/trends/api/widgetdata/multiline'
 export const GOOGLE_RELATED_SEARCHES_PATH = '/trends/api/widgetdata/relatedsearches' as const;
 
 /**
+ * Internal Google Trends endpoint used by the geographic-interest widget.
+ */
+export const GOOGLE_INTEREST_BY_REGION_PATH = '/trends/api/widgetdata/comparedgeo' as const;
+
+/**
  * Widget identifiers returned by the Explore endpoint.
  */
 export const GOOGLE_WIDGET_IDS = {
@@ -42,3 +47,5 @@ export const MAX_EXPLORE_COMPARISON_ITEMS = 5 as const;
 export const DEFAULT_INTEREST_OVER_TIME_RANGE = 'today 12-m' as const;
 
 export const DEFAULT_RELATED_SEARCHES_RANGE = 'today 12-m' as const;
+
+export const DEFAULT_INTEREST_BY_REGION_RANGE = 'today 12-m' as const;
