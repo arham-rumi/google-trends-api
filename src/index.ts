@@ -1,21 +1,24 @@
-export interface GoogleTrendsClientOptions {
-  locale?: string;
-  timezone?: number;
-  timeoutMs?: number;
-}
+export { GoogleTrendsClient, createClient } from './client.js';
 
-export class GoogleTrendsClient {
-  public readonly options: Readonly<Required<GoogleTrendsClientOptions>>;
+export {
+  GoogleTrendsError,
+  HttpStatusError,
+  InvalidResponseError,
+  NetworkError,
+  RateLimitError,
+  RequestAbortedError,
+  RequestTimeoutError,
+} from './errors.js';
 
-  public constructor(options: GoogleTrendsClientOptions = {}) {
-    this.options = Object.freeze({
-      locale: options.locale ?? 'en-US',
-      timezone: options.timezone ?? 0,
-      timeoutMs: options.timeoutMs ?? 10_000,
-    });
-  }
-}
+export type { GoogleTrendsErrorCode } from './errors.js';
 
-export function createClient(options?: GoogleTrendsClientOptions): GoogleTrendsClient {
-  return new GoogleTrendsClient(options);
-}
+export type {
+  FetchLike,
+  GoogleTrendsClientOptions,
+  HttpHeadersInit,
+  QueryParameters,
+  QueryPrimitive,
+  QueryValue,
+  ResolvedGoogleTrendsClientOptions,
+  RetryOptions,
+} from './types.js';

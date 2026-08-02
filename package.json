@@ -64,5 +64,8 @@
       "require": "./dist/index.cjs"
     },
     "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "fetch-cookie": "^3.2.0"
   }
 }

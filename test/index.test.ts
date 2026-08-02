@@ -6,10 +6,19 @@ describe('createClient', () => {
   it('creates a client with safe defaults', () => {
     const client = createClient();
 
-    expect(client.options).toEqual({
+    expect(client.options).toMatchObject({
       locale: 'en-US',
       timezone: 0,
       timeoutMs: 10_000,
+      retries: 2,
     });
+
+    expect(client.options.userAgent).toContain('google-trends-api');
+  });
+
+  it('rejects invalid options', () => {
+    expect(() => createClient({ timeoutMs: 0 })).toThrow(RangeError);
+    expect(() => createClient({ retries: -1 })).toThrow(RangeError);
+    expect(() => createClient({ locale: '' })).toThrow(RangeError);
   });
 });
