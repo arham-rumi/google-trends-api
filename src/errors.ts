@@ -90,13 +90,32 @@ export class NetworkError extends GoogleTrendsError {
   }
 }
 
+function formatEndpoint(url: string): string {
+  try {
+    const parsedUrl = new URL(url);
+    return `${parsedUrl.origin}${parsedUrl.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
 export class InvalidResponseError extends GoogleTrendsError {
   public readonly url: string;
+  public readonly responseBody: string | undefined;
+  public readonly contentType: string | undefined;
 
-  public constructor(url: string, cause?: unknown) {
-    super(`The response from ${url} could not be parsed.`, 'INVALID_RESPONSE', cause);
+  public constructor(url: string, cause?: unknown, responseBody?: string, contentType?: string) {
+    const detail = cause instanceof Error ? ` ${cause.message}` : '';
+
+    super(
+      `The response from ${formatEndpoint(url)} could not be parsed.${detail}`,
+      'INVALID_RESPONSE',
+      cause,
+    );
 
     this.url = url;
+    this.responseBody = responseBody;
+    this.contentType = contentType;
   }
 }
 

@@ -10,6 +10,16 @@ export const GOOGLE_XSSI_PREFIX = ")]}'" as const;
 export const GOOGLE_EXPLORE_PATH = '/trends/api/explore' as const;
 
 /**
+ * Browser page used to establish the Google Trends session and receive cookies.
+ */
+export const GOOGLE_EXPLORE_PAGE_PATH = '/explore' as const;
+
+/**
+ * Stable Google Trends landing page used if the Explore page is unavailable.
+ */
+export const GOOGLE_TRENDS_HOME_PATH = '/trends/' as const;
+
+/**
  * Internal Google Trends endpoint used for term and topic suggestions.
  */
 export const GOOGLE_AUTOCOMPLETE_PATH = '/trends/api/autocomplete/' as const;

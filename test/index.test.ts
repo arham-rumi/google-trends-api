@@ -17,7 +17,8 @@ describe('createClient', () => {
       retries: 2,
     });
 
-    expect(client.options.userAgent).toContain('google-trends-api');
+    expect(client.options.userAgent).toContain('Mozilla/5.0');
+    expect(client.options.userAgent).toContain('Chrome/');
   });
 
   it('rejects invalid options', () => {

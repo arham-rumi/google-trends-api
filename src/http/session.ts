@@ -1,11 +1,18 @@
 import makeFetchCookie from 'fetch-cookie';
 
-import { InvalidResponseError } from '../errors.js';
+import { HttpStatusError, InvalidResponseError } from '../errors.js';
+import { GOOGLE_EXPLORE_PAGE_PATH, GOOGLE_TRENDS_HOME_PATH } from '../google/constants.js';
 import type { FetchLike, HttpRequestOptions, HttpSessionOptions } from '../types.js';
 import { performRequest, type RequestContext } from './request.js';
 import { resolveRetryOptions } from './retry.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+export interface HttpSessionWarmupOptions {
+  locale?: string;
+  geo?: string;
+  signal?: AbortSignal;
+}
 
 export class HttpSession {
   readonly #context: RequestContext;
@@ -60,24 +67,41 @@ export class HttpSession {
     }
   }
 
-  public async warmup(signal?: AbortSignal): Promise<void> {
-    const options: HttpRequestOptions = {
+  public async warmup(options: HttpSessionWarmupOptions = {}): Promise<void> {
+    const requestOptions: HttpRequestOptions = {
       method: 'GET',
       headers: {
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'upgrade-insecure-requests': '1',
+      },
+      query: {
+        geo: options.geo,
+        hl: options.locale,
       },
       retry: {
         retries: 1,
       },
     };
 
-    if (signal !== undefined) {
-      options.signal = signal;
+    if (options.signal !== undefined) {
+      requestOptions.signal = options.signal;
     }
 
-    const response = await this.request('/trends/', options);
+    try {
+      await this.#consumeWarmupResponse(GOOGLE_EXPLORE_PAGE_PATH, requestOptions);
+    } catch (error) {
+      if (!(error instanceof HttpStatusError) || error.status !== 404) {
+        throw error;
+      }
 
-    // Consume the response so the underlying connection can be reused.
+      await this.#consumeWarmupResponse(GOOGLE_TRENDS_HOME_PATH, requestOptions);
+    }
+  }
+
+  async #consumeWarmupResponse(path: string, options: HttpRequestOptions): Promise<void> {
+    const response = await this.request(path, options);
+
+    // Consume the response so redirects and Set-Cookie headers are fully handled.
     await response.arrayBuffer();
   }
 }

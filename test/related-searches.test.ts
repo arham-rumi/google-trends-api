@@ -183,7 +183,7 @@ describe('related searches', () => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       requestedUrls.push(url);
 
-      if (url.pathname === '/trends/') {
+      if (url.pathname === '/explore') {
         return responseWithUrl('<html>ready</html>', url.toString());
       }
 
@@ -347,7 +347,7 @@ describe('related searches', () => {
     });
 
     expect(requestedUrls.map((url) => url.pathname)).toEqual([
-      '/trends/',
+      '/explore',
       '/trends/api/explore',
       '/trends/api/widgetdata/relatedsearches',
       '/trends/api/widgetdata/relatedsearches',

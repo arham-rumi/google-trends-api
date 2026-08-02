@@ -67,7 +67,7 @@ function parseOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-function parseExploreWidget(value: unknown, url: string, index: number): ExploreWidget {
+function parseExploreWidget(value: unknown, url: string, index: number): ExploreWidget | undefined {
   if (!isRecord(value)) {
     throw new InvalidResponseError(
       url,
@@ -82,11 +82,13 @@ function parseExploreWidget(value: unknown, url: string, index: number): Explore
     );
   }
 
+  /*
+   * Google may include presentation-only entries such as TITLE_0 alongside
+   * data widgets. These entries intentionally have no token and cannot be
+   * queried through a widget-data endpoint, so they are ignored.
+   */
   if (typeof value.token !== 'string' || value.token.length === 0) {
-    throw new InvalidResponseError(
-      url,
-      new TypeError(`Explore widget ${value.id} has no valid token.`),
-    );
+    return undefined;
   }
 
   if (!isRecord(value.request)) {
@@ -173,7 +175,18 @@ export function parseExploreWidgets(payload: unknown, url: string): ExploreWidge
     throw new InvalidResponseError(url, new TypeError('Explore response contains no widgets.'));
   }
 
-  return response.widgets.map((widget, index) => parseExploreWidget(widget, url, index));
+  const widgets = response.widgets
+    .map((widget, index) => parseExploreWidget(widget, url, index))
+    .filter((widget): widget is ExploreWidget => widget !== undefined);
+
+  if (widgets.length === 0) {
+    throw new InvalidResponseError(
+      url,
+      new TypeError('Explore response contains no tokenized data widgets.'),
+    );
+  }
+
+  return widgets;
 }
 
 export async function fetchExploreWidgets(

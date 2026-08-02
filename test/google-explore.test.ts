@@ -101,15 +101,58 @@ describe('Google Explore flow', () => {
     ]);
   });
 
+  it('ignores presentation-only widgets without tokens', () => {
+    const widgets = parseExploreWidgets(
+      {
+        widgets: [
+          {
+            id: 'TITLE_0',
+            title: 'Compare',
+            type: 'fe_title',
+          },
+          {
+            id: 'TIMESERIES',
+            token: 'timeline-token',
+            request: {
+              time: 'today 3-m',
+            },
+          },
+        ],
+      },
+      'https://trends.google.com/trends/api/explore',
+    );
+
+    expect(widgets).toEqual([
+      {
+        id: 'TIMESERIES',
+        token: 'timeline-token',
+        request: {
+          time: 'today 3-m',
+        },
+      },
+    ]);
+  });
+
   it('rejects malformed widget responses', () => {
     expect(() =>
       parseExploreWidgets(
         {
-          widgets: [{ id: 'TIMESERIES', request: {} }],
+          widgets: [{ id: 'TIMESERIES', token: 'timeline-token' }],
         },
         'https://trends.google.com/trends/api/explore',
       ),
     ).toThrow(InvalidResponseError);
+  });
+
+  it('rejects responses containing only presentation widgets', () => {
+    expect(() =>
+      parseExploreWidgets(
+        {
+          widgets: [{ id: 'TITLE_0', title: 'Compare' }],
+        },
+        'https://trends.google.com/trends/api/explore',
+      ),
+    ).toThrow('no tokenized data widgets');
   });
 
   it('selects widget ids with Google suffixes', () => {

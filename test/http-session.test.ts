@@ -106,4 +106,58 @@ describe('HttpSession', () => {
     expect(receivedCookies[0]).toBe('');
     expect(receivedCookies[1]).toContain('NID=test-session');
   });
+
+  it('warms up through the Explore page with locale and geography', async () => {
+    let requestedUrl: URL | undefined;
+
+    const fakeFetch: FetchLike = async (input) => {
+      requestedUrl = new URL(input instanceof Request ? input.url : input.toString());
+
+      return new Response('<html>ready</html>', {
+        status: 200,
+      });
+    };
+
+    const session = new HttpSession({
+      baseUrl: 'https://trends.google.com',
+      fetch: fakeFetch,
+      retry: {
+        retries: 0,
+      },
+    });
+
+    await session.warmup({
+      locale: 'en-US',
+      geo: 'US',
+    });
+
+    expect(requestedUrl?.pathname).toBe('/explore');
+    expect(requestedUrl?.searchParams.get('hl')).toBe('en-US');
+    expect(requestedUrl?.searchParams.get('geo')).toBe('US');
+  });
+
+  it('falls back to the Trends home page when Explore returns 404', async () => {
+    const requestedPaths: string[] = [];
+
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      requestedPaths.push(url.pathname);
+
+      return new Response(url.pathname === '/explore' ? 'Not found' : '<html>ready</html>', {
+        status: url.pathname === '/explore' ? 404 : 200,
+      });
+    };
+
+    const session = new HttpSession({
+      baseUrl: 'https://trends.google.com',
+      fetch: fakeFetch,
+      retry: {
+        retries: 0,
+      },
+    });
+
+    await session.warmup({ locale: 'en-US', geo: 'US' });
+
+    expect(requestedPaths).toEqual(['/explore', '/trends/']);
+  });
 });

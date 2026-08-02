@@ -25,13 +25,22 @@ import {
   type TrendingNowOptions,
   type TrendingNowResult,
 } from './google/trending-now.js';
-import { HttpSession } from './http/session.js';
+import { HttpSession, type HttpSessionWarmupOptions } from './http/session.js';
 import type { GoogleTrendsClientOptions, ResolvedGoogleTrendsClientOptions } from './types.js';
 
 const GOOGLE_TRENDS_BASE_URL = 'https://trends.google.com';
 
 const DEFAULT_USER_AGENT =
-  'google-trends-api-node (+https://github.com/arham-rumi/google-trends-api)';
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+function inferRegionFromLocale(locale: string): string | undefined {
+  try {
+    return new Intl.Locale(locale).region;
+  } catch {
+    return undefined;
+  }
+}
 
 function resolveOptions(options: GoogleTrendsClientOptions): ResolvedGoogleTrendsClientOptions {
   const resolved: ResolvedGoogleTrendsClientOptions = {
@@ -78,7 +87,10 @@ export class GoogleTrendsClient {
       },
       headers: {
         accept: 'application/json,text/plain,*/*',
-        'accept-language': this.options.locale,
+        'accept-language': `${this.options.locale},en;q=0.9`,
+        'cache-control': 'no-cache',
+        pragma: 'no-cache',
+        referer: `${GOOGLE_TRENDS_BASE_URL}/explore`,
         'user-agent': this.options.userAgent,
       },
       ...(options.fetch === undefined
@@ -89,11 +101,23 @@ export class GoogleTrendsClient {
     });
   }
 
+  #createWarmupOptions(signal?: AbortSignal): HttpSessionWarmupOptions {
+    const geo = inferRegionFromLocale(this.options.locale);
+
+    return {
+      locale: this.options.locale,
+      ...(geo === undefined ? {} : { geo }),
+      ...(signal === undefined ? {} : { signal }),
+    };
+  }
+
   #ensureWarmup(): Promise<void> {
-    this.#warmupPromise ??= this.#session.warmup().catch((error: unknown) => {
-      this.#warmupPromise = undefined;
-      throw error;
-    });
+    this.#warmupPromise ??= this.#session
+      .warmup(this.#createWarmupOptions())
+      .catch((error: unknown) => {
+        this.#warmupPromise = undefined;
+        throw error;
+      });
 
     return this.#warmupPromise;
   }
@@ -101,7 +125,7 @@ export class GoogleTrendsClient {
   /** Establishes the Google Trends session and collects cookies. */
   public warmup(signal?: AbortSignal): Promise<void> {
     if (signal !== undefined) {
-      return this.#session.warmup(signal);
+      return this.#session.warmup(this.#createWarmupOptions(signal));
     }
 
     return this.#ensureWarmup();
