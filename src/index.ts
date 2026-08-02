@@ -24,6 +24,15 @@ export type {
 export type { GoogleTrendsProperty } from './google/constants.js';
 
 export type {
+  RelatedQueriesResult,
+  RelatedQueryItem,
+  RelatedSearchesOptions,
+  RelatedTopic,
+  RelatedTopicItem,
+  RelatedTopicsResult,
+} from './google/related-searches.js';
+
+export type {
   FetchLike,
   GoogleTrendsClientOptions,
   HttpHeadersInit,

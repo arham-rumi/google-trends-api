@@ -3,6 +3,13 @@ import {
   type InterestOverTimeOptions,
   type InterestOverTimeResult,
 } from './google/interest-over-time.js';
+import {
+  fetchRelatedQueries,
+  fetchRelatedTopics,
+  type RelatedQueriesResult,
+  type RelatedSearchesOptions,
+  type RelatedTopicsResult,
+} from './google/related-searches.js';
 import { HttpSession } from './http/session.js';
 import type { GoogleTrendsClientOptions, ResolvedGoogleTrendsClientOptions } from './types.js';
 
@@ -92,6 +99,32 @@ export class GoogleTrendsClient {
     input.signal?.throwIfAborted();
 
     return fetchInterestOverTime(this.#session, {
+      ...input,
+      locale: this.options.locale,
+      timezone: this.options.timezone,
+    });
+  }
+
+  /** Returns top and rising searches related to each keyword. */
+  public async relatedQueries(input: RelatedSearchesOptions): Promise<RelatedQueriesResult[]> {
+    input.signal?.throwIfAborted();
+    await this.#ensureWarmup();
+    input.signal?.throwIfAborted();
+
+    return fetchRelatedQueries(this.#session, {
+      ...input,
+      locale: this.options.locale,
+      timezone: this.options.timezone,
+    });
+  }
+
+  /** Returns top and rising topics related to each keyword. */
+  public async relatedTopics(input: RelatedSearchesOptions): Promise<RelatedTopicsResult[]> {
+    input.signal?.throwIfAborted();
+    await this.#ensureWarmup();
+    input.signal?.throwIfAborted();
+
+    return fetchRelatedTopics(this.#session, {
       ...input,
       locale: this.options.locale,
       timezone: this.options.timezone,
