@@ -5,6 +5,9 @@ const UNKNOWN_RESPONSE_URL = 'unknown Google Trends endpoint';
 
 /**
  * Removes Google's anti-XSSI prefix while leaving valid JSON untouched.
+ *
+ * The Explore endpoint currently uses `)]}'`, while widget-data endpoints
+ * commonly use `)]}',`. Both variants are valid and must be supported.
  */
 export function stripGoogleXssiPrefix(payload: string): string {
   const normalizedPayload = payload.trimStart();
@@ -13,7 +16,13 @@ export function stripGoogleXssiPrefix(payload: string): string {
     return normalizedPayload;
   }
 
-  return normalizedPayload.slice(GOOGLE_XSSI_PREFIX.length).trimStart();
+  let jsonPayload = normalizedPayload.slice(GOOGLE_XSSI_PREFIX.length);
+
+  if (jsonPayload.startsWith(',')) {
+    jsonPayload = jsonPayload.slice(1);
+  }
+
+  return jsonPayload.trimStart();
 }
 
 /**

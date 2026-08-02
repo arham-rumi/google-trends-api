@@ -8,7 +8,11 @@ import {
 } from '../src/google/parser.js';
 
 describe('Google response parser', () => {
-  it('removes the Google anti-XSSI prefix', () => {
+  it('removes the four-character Explore anti-XSSI prefix', () => {
+    expect(stripGoogleXssiPrefix(`)]}'\n{"value":42}`)).toBe('{"value":42}');
+  });
+
+  it('removes the five-character widget-data anti-XSSI prefix', () => {
     expect(stripGoogleXssiPrefix(`)]}',\n{"value":42}`)).toBe('{"value":42}');
   });
 
@@ -22,13 +26,22 @@ describe('Google response parser', () => {
     });
   });
 
-  it('parses prefixed Google JSON', () => {
+  it('parses Explore JSON with the four-character prefix', () => {
     const result = parseGoogleJson<{ widgets: unknown[] }>(
-      `)]}',\n{"widgets":[]}`,
+      `)]}'\n{"widgets":[]}`,
       'https://trends.google.com/trends/api/explore',
     );
 
     expect(result).toEqual({ widgets: [] });
+  });
+
+  it('parses widget-data JSON with the comma prefix', () => {
+    const result = parseGoogleJson<{ default: object }>(
+      `)]}',\n{"default":{}}`,
+      'https://trends.google.com/trends/api/widgetdata/multiline',
+    );
+
+    expect(result).toEqual({ default: {} });
   });
 
   it('rejects empty responses with a library error', () => {
@@ -42,8 +55,10 @@ describe('Google response parser', () => {
   });
 
   it('reads and parses a Fetch API response', async () => {
-    const response = new Response(`)]}',\n{"ok":true}`);
+    const response = new Response(`)]}'\n{"ok":true}`);
 
-    await expect(parseGoogleResponse<{ ok: boolean }>(response)).resolves.toEqual({ ok: true });
+    await expect(parseGoogleResponse<{ ok: boolean }>(response)).resolves.toEqual({
+      ok: true,
+    });
   });
 });
