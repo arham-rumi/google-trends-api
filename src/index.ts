@@ -14,6 +14,16 @@ export {
 export type { GoogleTrendsErrorCode } from './errors.js';
 
 export type {
+  InterestOverTimeAverage,
+  InterestOverTimeOptions,
+  InterestOverTimePoint,
+  InterestOverTimeResult,
+  InterestOverTimeValue,
+} from './google/interest-over-time.js';
+
+export type { GoogleTrendsProperty } from './google/constants.js';
+
+export type {
   FetchLike,
   GoogleTrendsClientOptions,
   HttpHeadersInit,

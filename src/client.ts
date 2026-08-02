@@ -1,3 +1,8 @@
+import {
+  fetchInterestOverTime,
+  type InterestOverTimeOptions,
+  type InterestOverTimeResult,
+} from './google/interest-over-time.js';
 import { HttpSession } from './http/session.js';
 import type { GoogleTrendsClientOptions, ResolvedGoogleTrendsClientOptions } from './types.js';
 
@@ -38,6 +43,7 @@ export class GoogleTrendsClient {
   public readonly options: Readonly<ResolvedGoogleTrendsClientOptions>;
 
   readonly #session: HttpSession;
+  #warmupPromise: Promise<void> | undefined;
 
   public constructor(options: GoogleTrendsClientOptions = {}) {
     this.options = Object.freeze(resolveOptions(options));
@@ -61,12 +67,35 @@ export class GoogleTrendsClient {
     });
   }
 
-  /**
-   * Establishes the initial Google Trends session and collects cookies.
-   * Public API methods will eventually call this automatically.
-   */
+  #ensureWarmup(): Promise<void> {
+    this.#warmupPromise ??= this.#session.warmup().catch((error: unknown) => {
+      this.#warmupPromise = undefined;
+      throw error;
+    });
+
+    return this.#warmupPromise;
+  }
+
+  /** Establishes the Google Trends session and collects cookies. */
   public warmup(signal?: AbortSignal): Promise<void> {
-    return this.#session.warmup(signal);
+    if (signal !== undefined) {
+      return this.#session.warmup(signal);
+    }
+
+    return this.#ensureWarmup();
+  }
+
+  /** Returns normalized Google Trends interest values over time. */
+  public async interestOverTime(input: InterestOverTimeOptions): Promise<InterestOverTimeResult> {
+    input.signal?.throwIfAborted();
+    await this.#ensureWarmup();
+    input.signal?.throwIfAborted();
+
+    return fetchInterestOverTime(this.#session, {
+      ...input,
+      locale: this.options.locale,
+      timezone: this.options.timezone,
+    });
   }
 }
 
