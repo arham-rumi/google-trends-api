@@ -24,6 +24,11 @@ export const GOOGLE_RELATED_SEARCHES_PATH = '/trends/api/widgetdata/relatedsearc
 export const GOOGLE_INTEREST_BY_REGION_PATH = '/trends/api/widgetdata/comparedgeo' as const;
 
 /**
+ * Public RSS endpoint used by the Trending Now feature.
+ */
+export const GOOGLE_TRENDING_NOW_PATH = '/trending/rss' as const;
+
+/**
  * Widget identifiers returned by the Explore endpoint.
  */
 export const GOOGLE_WIDGET_IDS = {

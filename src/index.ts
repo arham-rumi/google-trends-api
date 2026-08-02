@@ -33,6 +33,13 @@ export type {
 export type { GoogleTrendsProperty } from './google/constants.js';
 
 export type {
+  TrendingNowItem,
+  TrendingNowNewsItem,
+  TrendingNowOptions,
+  TrendingNowResult,
+} from './google/trending-now.js';
+
+export type {
   RelatedQueriesResult,
   RelatedQueryItem,
   RelatedSearchesOptions,

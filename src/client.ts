@@ -15,6 +15,11 @@ import {
   type RelatedSearchesOptions,
   type RelatedTopicsResult,
 } from './google/related-searches.js';
+import {
+  fetchTrendingNow,
+  type TrendingNowOptions,
+  type TrendingNowResult,
+} from './google/trending-now.js';
 import { HttpSession } from './http/session.js';
 import type { GoogleTrendsClientOptions, ResolvedGoogleTrendsClientOptions } from './types.js';
 
@@ -146,6 +151,16 @@ export class GoogleTrendsClient {
       ...input,
       locale: this.options.locale,
       timezone: this.options.timezone,
+    });
+  }
+
+  /** Returns searches currently surging in the selected country or territory. */
+  public trendingNow(input: TrendingNowOptions): Promise<TrendingNowResult> {
+    input.signal?.throwIfAborted();
+
+    return fetchTrendingNow(this.#session, {
+      ...input,
+      locale: this.options.locale,
     });
   }
 }
