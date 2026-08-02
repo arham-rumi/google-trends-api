@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createClient } from '../src/index.js';
+import {
+  GOOGLE_TRENDS_PROPERTIES,
+  INTEREST_BY_REGION_RESOLUTIONS,
+  createClient,
+} from '../src/index.js';
 
 describe('createClient', () => {
   it('creates a client with safe defaults', () => {
@@ -20,5 +24,15 @@ describe('createClient', () => {
     expect(() => createClient({ timeoutMs: 0 })).toThrow(RangeError);
     expect(() => createClient({ retries: -1 })).toThrow(RangeError);
     expect(() => createClient({ locale: '' })).toThrow(RangeError);
+  });
+});
+
+describe('public constants', () => {
+  it('exports supported Google Trends properties', () => {
+    expect(GOOGLE_TRENDS_PROPERTIES).toEqual(['', 'images', 'news', 'youtube', 'froogle']);
+  });
+
+  it('exports supported geographic resolutions', () => {
+    expect(INTEREST_BY_REGION_RESOLUTIONS).toEqual(['COUNTRY', 'REGION', 'CITY', 'DMA']);
   });
 });
