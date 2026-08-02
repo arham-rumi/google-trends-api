@@ -13,6 +13,8 @@ export {
 
 export type { GoogleTrendsErrorCode } from './errors.js';
 
+export { INTEREST_BY_REGION_RESOLUTIONS } from './google/interest-by-region.js';
+
 export type {
   InterestByRegionCoordinates,
   InterestByRegionOptions,
@@ -30,6 +32,7 @@ export type {
   InterestOverTimeValue,
 } from './google/interest-over-time.js';
 
+export { GOOGLE_TRENDS_PROPERTIES } from './google/constants.js';
 export type { GoogleTrendsProperty } from './google/constants.js';
 
 export type {

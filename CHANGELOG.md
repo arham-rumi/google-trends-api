@@ -1,0 +1,21 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- Modern TypeScript client with ESM and CommonJS builds.
+- Cookie-aware HTTP sessions with timeouts, retry handling, and abort signals.
+- Typed error hierarchy for network, HTTP, parsing, rate-limit, timeout, cancellation, and missing-widget failures.
+- Google anti-XSSI response parsing and Explore widget token discovery.
+- Interest over time.
+- Interest by region.
+- Related queries and related topics.
+- Trending Now RSS results.
+- Search-term and topic autocomplete.
+- Public constants for supported search properties and geographic resolutions.
+- Unit tests and package validation with Vitest, Publint, and Are The Types Wrong.
