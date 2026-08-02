@@ -1,7 +1,8 @@
 /**
- * Prefix used by Google endpoints to prevent JSON hijacking.
+ * Base prefix used by Google endpoints to prevent JSON hijacking.
+ * Explore uses this form; widget-data endpoints may append a comma.
  */
-export const GOOGLE_XSSI_PREFIX = ")]}'," as const;
+export const GOOGLE_XSSI_PREFIX = ")]}'" as const;
 
 /**
  * Internal Google Trends endpoint used to discover tokenized widgets.
