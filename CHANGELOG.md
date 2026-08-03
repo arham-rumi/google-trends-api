@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-03
+
 ### Added
 
 - Modern TypeScript client with ESM and CommonJS builds.
@@ -22,3 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Cross-platform GitHub Actions CI for supported Node.js versions.
 - Weekly Dependabot checks for npm and GitHub Actions updates.
 - Opt-in and scheduled live integration smoke tests for Explore, autocomplete, and Trending Now.
+- Packed-package consumer tests for both ESM and CommonJS.
+- Tag-based npm publishing workflow prepared for Trusted Publishing.
+
+[Unreleased]: https://github.com/arham-rumi/google-trends-api/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/arham-rumi/google-trends-api/releases/tag/v0.1.0

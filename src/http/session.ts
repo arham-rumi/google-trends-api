@@ -1,4 +1,4 @@
-import makeFetchCookie from 'fetch-cookie';
+import fetchCookieExport from 'fetch-cookie';
 
 import { HttpStatusError, InvalidResponseError } from '../errors.js';
 import { GOOGLE_EXPLORE_PAGE_PATH, GOOGLE_TRENDS_HOME_PATH } from '../google/constants.js';
@@ -7,6 +7,27 @@ import { performRequest, type RequestContext } from './request.js';
 import { resolveRetryOptions } from './retry.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+type FetchCookieFactory = typeof import('fetch-cookie').default;
+
+function resolveFetchCookieFactory(value: unknown): FetchCookieFactory {
+  if (typeof value === 'function') {
+    return value as FetchCookieFactory;
+  }
+
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'default' in value &&
+    typeof value.default === 'function'
+  ) {
+    return value.default as FetchCookieFactory;
+  }
+
+  throw new TypeError('fetch-cookie did not expose a callable default export.');
+}
+
+const makeFetchCookie = resolveFetchCookieFactory(fetchCookieExport);
 
 export interface HttpSessionWarmupOptions {
   locale?: string;

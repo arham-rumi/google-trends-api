@@ -12,8 +12,7 @@
     "node": ">=22.14.0"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "repository": {
     "type": "git",
@@ -42,7 +41,9 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "package:check": "npm run build && publint --pack npm && attw --pack .",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run package:check",
-    "prepublishOnly": "npm run check"
+    "prepublishOnly": "npm run check",
+    "test:package": "npm run build && node scripts/test-package.mjs",
+    "release:check": "npm run check && npm run test:package && npm publish --dry-run --ignore-scripts"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
