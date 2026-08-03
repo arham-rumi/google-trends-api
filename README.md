@@ -1,5 +1,8 @@
 # @arham-rumi/google-trends-api
 
+[![CI](https://github.com/arham-rumi/google-trends-api/actions/workflows/ci.yml/badge.svg)](https://github.com/arham-rumi/google-trends-api/actions/workflows/ci.yml)
+[![Live Integration](https://github.com/arham-rumi/google-trends-api/actions/workflows/live-integration.yml/badge.svg)](https://github.com/arham-rumi/google-trends-api/actions/workflows/live-integration.yml)
+
 A modern, typed, unofficial Google Trends client for Node.js.
 
 > This package is not affiliated with, maintained by, or endorsed by Google.
@@ -253,6 +256,14 @@ Run the repository example after building:
 npm run build
 node examples/basic.mjs
 ```
+
+Run the opt-in live smoke tests:
+
+```bash
+npm run test:integration
+```
+
+The live suite calls Google endpoints and may fail when Google changes an endpoint, presents a challenge page, or rate-limits the runner. GitHub Actions runs this suite weekly and also supports manual runs.
 
 ## Limitations and responsible use
 

@@ -19,3 +19,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Search-term and topic autocomplete.
 - Public constants for supported search properties and geographic resolutions.
 - Unit tests and package validation with Vitest, Publint, and Are The Types Wrong.
+- Cross-platform GitHub Actions CI for supported Node.js versions.
+- Weekly Dependabot checks for npm and GitHub Actions updates.
+- Opt-in and scheduled live integration smoke tests for Explore, autocomplete, and Trending Now.
