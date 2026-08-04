@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { InvalidResponseError } from '../src/errors.js';
+import { InvalidResponseError, RateLimitError } from '../src/errors.js';
 import {
   buildInterestOverTimeComparisonItems,
   parseInterestOverTimeResponse,
@@ -416,5 +416,115 @@ describe('interestOverTime', () => {
       '/trends/api/explore',
       '/trends/api/widgetdata/multiline',
     ]);
+  });
+
+  it('waits, refreshes the session, and retries the complete token flow after 429', async () => {
+    const requestedPaths: string[] = [];
+    let exploreAttempts = 0;
+
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      requestedPaths.push(url.pathname);
+
+      if (url.pathname === '/trends/api/explore') {
+        exploreAttempts += 1;
+
+        if (exploreAttempts === 1) {
+          return responseWithUrl('Too many requests', url.toString(), {
+            status: 429,
+          });
+        }
+
+        return responseWithUrl(
+          `)]}',\n${JSON.stringify({
+            widgets: [
+              {
+                id: 'TIMESERIES',
+                token: 'recovered-token',
+                request: { time: 'today 12-m', requestOptions: {} },
+              },
+            ],
+          })}`,
+          url.toString(),
+        );
+      }
+
+      if (url.pathname === '/explore') {
+        return responseWithUrl('<html>fresh session</html>', url.toString());
+      }
+
+      if (url.pathname === '/trends/api/widgetdata/multiline') {
+        return responseWithUrl(
+          `)]}',\n${JSON.stringify({
+            default: {
+              timelineData: [
+                {
+                  time: '1711929600',
+                  formattedTime: 'Apr 1, 2024',
+                  value: [80],
+                  hasData: [true],
+                  formattedValue: ['80'],
+                },
+              ],
+              averages: [80],
+            },
+          })}`,
+          url.toString(),
+        );
+      }
+
+      return responseWithUrl('Not found', url.toString(), { status: 404 });
+    };
+
+    const client = createClient({
+      retries: 0,
+      rateLimit: {
+        minIntervalMs: 0,
+        cooldownMs: 0,
+        recoveryDelaysMs: [0],
+      },
+      fetch: fakeFetch,
+    });
+
+    const result = await client.interestOverTime({ keywords: 'TypeScript' });
+
+    expect(requestedPaths).toEqual([
+      '/trends/api/explore',
+      '/explore',
+      '/trends/api/explore',
+      '/trends/api/widgetdata/multiline',
+    ]);
+    expect(result.timeline[0]?.values[0]?.value).toBe(80);
+    expect(getResultMetadata(result)?.source).toBe('network');
+    expect(client.cooldownRemainingMs).toBe(0);
+  });
+
+  it('stops after the configured recovery attempts are exhausted', async () => {
+    let requestCount = 0;
+
+    const fakeFetch: FetchLike = async (input) => {
+      const url = input instanceof Request ? input.url : input.toString();
+      requestCount += 1;
+
+      return responseWithUrl('Too many requests', url, {
+        status: 429,
+      });
+    };
+
+    const client = createClient({
+      retries: 0,
+      rateLimit: {
+        minIntervalMs: 0,
+        cooldownMs: 0,
+        recoveryDelaysMs: [0, 0],
+      },
+      fetch: fakeFetch,
+    });
+
+    await expect(client.interestOverTime({ keywords: 'TypeScript' })).rejects.toBeInstanceOf(
+      RateLimitError,
+    );
+
+    expect(requestCount).toBe(3);
   });
 });

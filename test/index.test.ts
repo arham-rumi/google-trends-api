@@ -19,6 +19,10 @@ describe('createClient', () => {
         enabled: true,
         minIntervalMs: 2_500,
         cooldownMs: 60_000,
+        recovery: true,
+        recoveryDelaysMs: [
+          60_000, 120_000, 180_000, 300_000, 600_000, 900_000, 1_200_000, 1_500_000, 1_800_000,
+        ],
       },
       cache: {
         enabled: true,
@@ -37,6 +41,7 @@ describe('createClient', () => {
     expect(() => createClient({ retries: -1 })).toThrow(RangeError);
     expect(() => createClient({ locale: '' })).toThrow(RangeError);
     expect(() => createClient({ rateLimit: { minIntervalMs: -1 } })).toThrow(RangeError);
+    expect(() => createClient({ rateLimit: { recoveryDelaysMs: [-1] } })).toThrow(RangeError);
     expect(() => createClient({ cache: { maxEntries: 0 } })).toThrow(RangeError);
   });
 });

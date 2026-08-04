@@ -192,4 +192,43 @@ describe('HttpSession', () => {
     await expect(session.getText('/data')).rejects.toBeInstanceOf(RateLimitError);
     expect(requestCount).toBe(1);
   });
+
+  it('can replace its cookie jar during rate-limit recovery', async () => {
+    const receivedCookies: string[] = [];
+
+    const fakeFetch: FetchLike = async (input, init) => {
+      const url = input instanceof Request ? input.url : input.toString();
+      receivedCookies.push(new Headers(init?.headers).get('cookie') ?? '');
+
+      const response = new Response('ok', {
+        status: 200,
+        ...(receivedCookies.length === 1
+          ? { headers: { 'set-cookie': 'NID=old-session; Path=/; HttpOnly' } }
+          : {}),
+      });
+
+      Object.defineProperty(response, 'url', {
+        value: url,
+        configurable: true,
+      });
+
+      return response;
+    };
+
+    const session = new HttpSession({
+      baseUrl: 'https://example.test',
+      rateLimit: { enabled: false },
+      fetch: fakeFetch,
+      retry: { retries: 0 },
+    });
+
+    await session.getText('/first');
+    await session.getText('/second');
+    session.resetCookies();
+    await session.getText('/third');
+
+    expect(receivedCookies[0]).toBe('');
+    expect(receivedCookies[1]).toContain('NID=old-session');
+    expect(receivedCookies[2]).toBe('');
+  });
 });

@@ -37,6 +37,7 @@ export interface HttpSessionWarmupOptions {
 }
 
 export class HttpSession {
+  readonly #baseFetch: FetchLike;
   readonly #context: RequestContext;
 
   public constructor(options: HttpSessionOptions) {
@@ -46,17 +47,11 @@ export class HttpSession {
       throw new RangeError('timeoutMs must be greater than zero.');
     }
 
-    const baseFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-
-    /*
-     * fetch-cookie supports the native Fetch API, but its generic type is
-     * narrower than our injectable FetchLike interface.
-     */
-    const cookieFetch = makeFetchCookie(baseFetch as typeof globalThis.fetch) as FetchLike;
+    this.#baseFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
 
     this.#context = {
       baseUrl: new URL(options.baseUrl),
-      fetch: cookieFetch,
+      fetch: this.#createCookieFetch(),
       defaultHeaders: new Headers(options.headers),
       timeoutMs,
       retry: resolveRetryOptions(options.retry),
@@ -64,8 +59,28 @@ export class HttpSession {
     };
   }
 
+  #createCookieFetch(): FetchLike {
+    /*
+     * fetch-cookie supports the native Fetch API, but its generic type is
+     * narrower than our injectable FetchLike interface.
+     */
+    return makeFetchCookie(this.#baseFetch as typeof globalThis.fetch) as FetchLike;
+  }
+
   public get cooldownRemainingMs(): number {
     return this.#context.governor.cooldownRemainingMs;
+  }
+
+  public waitForCooldown(signal?: AbortSignal): Promise<void> {
+    return this.#context.governor.waitForCooldown(signal);
+  }
+
+  public markOperationSucceeded(): void {
+    this.#context.governor.markOperationSucceeded();
+  }
+
+  public resetCookies(): void {
+    this.#context.fetch = this.#createCookieFetch();
   }
 
   public request(path: string | URL, options: HttpRequestOptions = {}): Promise<Response> {

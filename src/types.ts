@@ -28,14 +28,28 @@ export interface RateLimitOptions {
   /** Minimum delay between the start of Google requests. Defaults to 2500 ms. */
   minIntervalMs?: number;
 
-  /** Fallback cooldown after HTTP 429 when Retry-After is absent. Defaults to 60 seconds. */
+  /** Fallback cooldown when automatic recovery is disabled. Defaults to 60 seconds. */
   cooldownMs?: number;
+
+  /**
+   * Waits, refreshes the cookie session, and retries tokenized operations after HTTP 429.
+   * Defaults to true.
+   */
+  recovery?: boolean;
+
+  /**
+   * Delay before each automatic recovery attempt. Defaults to
+   * 1, 2, 3, 5, 10, 15, 20, 25, and 30 minutes.
+   */
+  recoveryDelaysMs?: readonly number[];
 }
 
 export interface ResolvedRateLimitOptions {
   enabled: boolean;
   minIntervalMs: number;
   cooldownMs: number;
+  recovery: boolean;
+  recoveryDelaysMs: readonly number[];
 }
 
 export interface HttpSessionOptions {

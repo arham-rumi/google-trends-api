@@ -7,6 +7,7 @@ function createLiveClient() {
     locale: 'en-US',
     timeoutMs: 30_000,
     retries: 0,
+    rateLimit: { recovery: false },
   });
 }
 

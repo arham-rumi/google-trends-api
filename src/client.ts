@@ -205,7 +205,7 @@ export class GoogleTrendsClient {
     return this.#warmupPromise;
   }
 
-  async #runTokenized<T>(
+  async #runTokenizedOnce<T>(
     operation: (signal: AbortSignal) => Promise<T>,
     signal: AbortSignal,
   ): Promise<T> {
@@ -220,6 +220,53 @@ export class GoogleTrendsClient {
       await this.#ensureWarmup();
       signal.throwIfAborted();
       return operation(signal);
+    }
+  }
+
+  async #refreshSession(signal: AbortSignal): Promise<void> {
+    await this.#session.waitForCooldown(signal);
+    signal.throwIfAborted();
+
+    this.#session.resetCookies();
+    this.#warmupPromise = undefined;
+
+    await this.#session.warmup(this.#createWarmupOptions(signal));
+    signal.throwIfAborted();
+  }
+
+  async #runTokenized<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+    recoverRateLimits: boolean,
+  ): Promise<T> {
+    const recoveryEnabled =
+      recoverRateLimits && this.options.rateLimit.enabled && this.options.rateLimit.recovery;
+    const maxRecoveryAttempts = this.options.rateLimit.recoveryDelaysMs.length;
+    let recoveryAttempts = 0;
+    let refreshSession = false;
+
+    while (true) {
+      try {
+        if (refreshSession) {
+          await this.#refreshSession(signal);
+          refreshSession = false;
+        }
+
+        const value = await this.#runTokenizedOnce(operation, signal);
+        this.#session.markOperationSucceeded();
+        return value;
+      } catch (error) {
+        if (
+          !(error instanceof RateLimitError) ||
+          !recoveryEnabled ||
+          recoveryAttempts >= maxRecoveryAttempts
+        ) {
+          throw error;
+        }
+
+        recoveryAttempts += 1;
+        refreshSession = true;
+      }
     }
   }
 
@@ -315,7 +362,11 @@ export class GoogleTrendsClient {
     const promise = (async (): Promise<OperationOutcome<T>> => {
       try {
         const value = options.tokenized
-          ? await this.#runTokenized(options.operation, controller.signal)
+          ? await this.#runTokenized(
+              options.operation,
+              controller.signal,
+              cached?.state !== 'stale',
+            )
           : await options.operation(controller.signal);
 
         this.#cache.set(key, value);
