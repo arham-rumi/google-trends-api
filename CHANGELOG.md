@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-05
+
+### Fixed
+
+- Restored automatic recovery for rate-limited tokenized requests.
+- Added progressive recovery delays of 1, 2, 3, 5, 10, 15, 20, 25, and 30 minutes.
+- Reset the Google session and performed a fresh warm-up before retrying the complete tokenized request flow.
+- Preserved request queueing, caching, deduplication, stale-cache fallback, `Retry-After` handling, and abort support during recovery.
+
+## [0.2.0] - 2026-08-04
+
 ### Added
 
 - Serialized request governor with configurable spacing and shared HTTP 429 cooldowns.
@@ -40,5 +51,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Packed-package consumer tests for both ESM and CommonJS.
 - Tag-based npm publishing workflow prepared for Trusted Publishing.
 
-[Unreleased]: https://github.com/arham-rumi/google-trends-api/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/arham-rumi/google-trends-api/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/arham-rumi/google-trends-api/releases/tag/v0.1.0
