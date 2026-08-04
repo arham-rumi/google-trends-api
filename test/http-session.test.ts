@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { HttpStatusError } from '../src/errors.js';
+import { HttpStatusError, RateLimitError } from '../src/errors.js';
 import { HttpSession } from '../src/http/session.js';
 import type { FetchLike } from '../src/types.js';
 
@@ -24,6 +24,7 @@ describe('HttpSession', () => {
 
     const session = new HttpSession({
       baseUrl: 'https://example.test',
+      rateLimit: { enabled: false },
       fetch: fakeFetch,
       retry: {
         retries: 1,
@@ -50,6 +51,7 @@ describe('HttpSession', () => {
 
     const session = new HttpSession({
       baseUrl: 'https://example.test',
+      rateLimit: { enabled: false },
       fetch: fakeFetch,
       retry: {
         retries: 3,
@@ -94,6 +96,7 @@ describe('HttpSession', () => {
 
     const session = new HttpSession({
       baseUrl: 'https://example.test',
+      rateLimit: { enabled: false },
       fetch: fakeFetch,
       retry: {
         retries: 0,
@@ -120,6 +123,7 @@ describe('HttpSession', () => {
 
     const session = new HttpSession({
       baseUrl: 'https://trends.google.com',
+      rateLimit: { enabled: false },
       fetch: fakeFetch,
       retry: {
         retries: 0,
@@ -150,6 +154,7 @@ describe('HttpSession', () => {
 
     const session = new HttpSession({
       baseUrl: 'https://trends.google.com',
+      rateLimit: { enabled: false },
       fetch: fakeFetch,
       retry: {
         retries: 0,
@@ -159,5 +164,32 @@ describe('HttpSession', () => {
     await session.warmup({ locale: 'en-US', geo: 'US' });
 
     expect(requestedPaths).toEqual(['/explore', '/trends/']);
+  });
+
+  it('does not immediately retry HTTP 429 responses', async () => {
+    let requestCount = 0;
+
+    const fakeFetch: FetchLike = async () => {
+      requestCount += 1;
+
+      return new Response('Too many requests', {
+        status: 429,
+        headers: { 'retry-after': '60' },
+      });
+    };
+
+    const session = new HttpSession({
+      baseUrl: 'https://example.test',
+      rateLimit: { enabled: false },
+      fetch: fakeFetch,
+      retry: {
+        retries: 3,
+        minDelayMs: 0,
+        maxDelayMs: 0,
+      },
+    });
+
+    await expect(session.getText('/data')).rejects.toBeInstanceOf(RateLimitError);
+    expect(requestCount).toBe(1);
   });
 });

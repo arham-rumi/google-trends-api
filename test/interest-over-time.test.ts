@@ -5,7 +5,7 @@ import {
   buildInterestOverTimeComparisonItems,
   parseInterestOverTimeResponse,
 } from '../src/google/interest-over-time.js';
-import { createClient } from '../src/index.js';
+import { createClient, getResultMetadata } from '../src/index.js';
 import type { FetchLike } from '../src/types.js';
 
 function responseWithUrl(body: string, url: string, init: ResponseInit = {}): Response {
@@ -118,7 +118,7 @@ describe('interestOverTime', () => {
     ).toThrow(InvalidResponseError);
   });
 
-  it('warms the session, discovers a token, and requests timeline data', async () => {
+  it('discovers a token without eager warm-up and requests timeline data', async () => {
     const requestedUrls: URL[] = [];
 
     const fakeFetch: FetchLike = async (input) => {
@@ -180,6 +180,7 @@ describe('interestOverTime', () => {
       locale: 'en-US',
       timezone: -300,
       retries: 0,
+      rateLimit: { enabled: false },
       fetch: fakeFetch,
     });
 
@@ -191,12 +192,11 @@ describe('interestOverTime', () => {
     });
 
     expect(requestedUrls.map((url) => url.pathname)).toEqual([
-      '/explore',
       '/trends/api/explore',
       '/trends/api/widgetdata/multiline',
     ]);
 
-    const timelineUrl = requestedUrls[2] as URL;
+    const timelineUrl = requestedUrls[1] as URL;
     expect(timelineUrl.searchParams.get('token')).toBe('timeline-token');
     expect(timelineUrl.searchParams.get('hl')).toBe('en-US');
     expect(timelineUrl.searchParams.get('tz')).toBe('-300');
@@ -215,5 +215,206 @@ describe('interestOverTime', () => {
       hasData: true,
       formattedValue: '80',
     });
+  });
+
+  it('deduplicates concurrent requests and serves repeated calls from cache', async () => {
+    const requestedUrls: URL[] = [];
+
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      requestedUrls.push(url);
+
+      if (url.pathname === '/trends/api/explore') {
+        return responseWithUrl(
+          `)]}',\n${JSON.stringify({
+            widgets: [
+              {
+                id: 'TIMESERIES',
+                token: 'timeline-token',
+                request: { time: 'today 12-m', requestOptions: {} },
+              },
+            ],
+          })}`,
+          url.toString(),
+        );
+      }
+
+      return responseWithUrl(
+        `)]}',\n${JSON.stringify({
+          default: {
+            timelineData: [
+              {
+                time: '1711929600',
+                formattedTime: 'Apr 1, 2024',
+                value: [80],
+                hasData: [true],
+                formattedValue: ['80'],
+              },
+            ],
+            averages: [80],
+          },
+        })}`,
+        url.toString(),
+      );
+    };
+
+    const client = createClient({
+      retries: 0,
+      rateLimit: { minIntervalMs: 0 },
+      fetch: fakeFetch,
+    });
+    const input = { keywords: 'TypeScript', geo: 'US' } as const;
+    const [first, second] = await Promise.all([
+      client.interestOverTime(input),
+      client.interestOverTime(input),
+    ]);
+
+    expect(requestedUrls).toHaveLength(2);
+    expect(getResultMetadata(first)).toEqual({ source: 'network', stale: false });
+    expect(getResultMetadata(second)).toEqual({ source: 'network', stale: false });
+
+    const cached = await client.interestOverTime(input);
+
+    expect(requestedUrls).toHaveLength(2);
+    expect(getResultMetadata(cached)).toMatchObject({ source: 'cache', stale: false });
+    expect(cached).toEqual(first);
+  });
+
+  it('returns stale cached data on 429 and avoids requests during cooldown', async () => {
+    let rateLimited = false;
+    let requestCount = 0;
+
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      requestCount += 1;
+
+      if (rateLimited) {
+        return responseWithUrl('Too many requests', url.toString(), {
+          status: 429,
+          headers: { 'retry-after': '60' },
+        });
+      }
+
+      if (url.pathname === '/trends/api/explore') {
+        return responseWithUrl(
+          `)]}',\n${JSON.stringify({
+            widgets: [
+              {
+                id: 'TIMESERIES',
+                token: 'timeline-token',
+                request: { time: 'today 12-m', requestOptions: {} },
+              },
+            ],
+          })}`,
+          url.toString(),
+        );
+      }
+
+      return responseWithUrl(
+        `)]}',\n${JSON.stringify({
+          default: {
+            timelineData: [
+              {
+                time: '1711929600',
+                formattedTime: 'Apr 1, 2024',
+                value: [80],
+                hasData: [true],
+                formattedValue: ['80'],
+              },
+            ],
+            averages: [80],
+          },
+        })}`,
+        url.toString(),
+      );
+    };
+
+    const client = createClient({
+      retries: 3,
+      rateLimit: { minIntervalMs: 0, cooldownMs: 60_000 },
+      cache: { ttlMs: 1, staleIfErrorMs: 60_000 },
+      fetch: fakeFetch,
+    });
+    const input = { keywords: 'TypeScript', geo: 'US' } as const;
+
+    await client.interestOverTime(input);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    rateLimited = true;
+
+    const stale = await client.interestOverTime(input);
+
+    expect(requestCount).toBe(3);
+    expect(getResultMetadata(stale)).toMatchObject({
+      source: 'stale-cache',
+      stale: true,
+    });
+    expect(client.cooldownRemainingMs).toBeGreaterThan(0);
+
+    const duringCooldown = await client.interestOverTime(input);
+
+    expect(requestCount).toBe(3);
+    expect(getResultMetadata(duringCooldown)?.source).toBe('stale-cache');
+  });
+
+  it('warms up lazily only after Google returns an HTML challenge', async () => {
+    const requestedPaths: string[] = [];
+    let exploreAttempts = 0;
+
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      requestedPaths.push(url.pathname);
+
+      if (url.pathname === '/trends/api/explore') {
+        exploreAttempts += 1;
+
+        if (exploreAttempts === 1) {
+          return responseWithUrl('<html>consent required</html>', url.toString(), {
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+
+        return responseWithUrl(
+          `)]}',\n${JSON.stringify({
+            widgets: [
+              {
+                id: 'TIMESERIES',
+                token: 'timeline-token',
+                request: { time: 'today 12-m', requestOptions: {} },
+              },
+            ],
+          })}`,
+          url.toString(),
+        );
+      }
+
+      if (url.pathname === '/explore') {
+        return responseWithUrl('<html>ready</html>', url.toString());
+      }
+
+      return responseWithUrl(
+        `)]}',\n${JSON.stringify({
+          default: {
+            timelineData: [],
+            averages: [],
+          },
+        })}`,
+        url.toString(),
+      );
+    };
+
+    const client = createClient({
+      retries: 0,
+      rateLimit: { enabled: false },
+      fetch: fakeFetch,
+    });
+
+    await client.interestOverTime({ keywords: 'TypeScript' });
+
+    expect(requestedPaths).toEqual([
+      '/trends/api/explore',
+      '/explore',
+      '/trends/api/explore',
+      '/trends/api/widgetdata/multiline',
+    ]);
   });
 });

@@ -1,5 +1,8 @@
 export { GoogleTrendsClient, createClient } from './client.js';
 
+export { getResultMetadata } from './result-metadata.js';
+export type { ResultMetadata, ResultSource } from './result-metadata.js';
+
 export {
   GoogleTrendsError,
   HttpStatusError,
@@ -58,12 +61,16 @@ export type {
 } from './google/related-searches.js';
 
 export type {
+  CacheOptions,
   FetchLike,
   GoogleTrendsClientOptions,
   HttpHeadersInit,
   QueryParameters,
   QueryPrimitive,
   QueryValue,
+  RateLimitOptions,
+  ResolvedCacheOptions,
   ResolvedGoogleTrendsClientOptions,
+  ResolvedRateLimitOptions,
   RetryOptions,
 } from './types.js';

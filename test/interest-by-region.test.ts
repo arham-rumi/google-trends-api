@@ -131,7 +131,7 @@ describe('interestByRegion', () => {
     ).toThrow(InvalidResponseError);
   });
 
-  it('warms the session, discovers a token, and requests geographic data', async () => {
+  it('discovers a token without eager warm-up and requests geographic data', async () => {
     const requestedUrls: URL[] = [];
 
     const fakeFetch: FetchLike = async (input) => {
@@ -196,6 +196,7 @@ describe('interestByRegion', () => {
       locale: 'en-US',
       timezone: -300,
       retries: 0,
+      rateLimit: { enabled: false },
       fetch: fakeFetch,
     });
 
@@ -209,12 +210,11 @@ describe('interestByRegion', () => {
     });
 
     expect(requestedUrls.map((url) => url.pathname)).toEqual([
-      '/explore',
       '/trends/api/explore',
       '/trends/api/widgetdata/comparedgeo',
     ]);
 
-    const geoUrl = requestedUrls[2] as URL;
+    const geoUrl = requestedUrls[1] as URL;
     expect(geoUrl.searchParams.get('token')).toBe('geo-token');
     expect(geoUrl.searchParams.get('hl')).toBe('en-US');
     expect(geoUrl.searchParams.get('tz')).toBe('-300');

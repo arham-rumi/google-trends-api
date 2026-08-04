@@ -15,6 +15,17 @@ describe('createClient', () => {
       timezone: 0,
       timeoutMs: 10_000,
       retries: 2,
+      rateLimit: {
+        enabled: true,
+        minIntervalMs: 2_500,
+        cooldownMs: 60_000,
+      },
+      cache: {
+        enabled: true,
+        ttlMs: 900_000,
+        staleIfErrorMs: 86_400_000,
+        maxEntries: 100,
+      },
     });
 
     expect(client.options.userAgent).toContain('Mozilla/5.0');
@@ -25,6 +36,8 @@ describe('createClient', () => {
     expect(() => createClient({ timeoutMs: 0 })).toThrow(RangeError);
     expect(() => createClient({ retries: -1 })).toThrow(RangeError);
     expect(() => createClient({ locale: '' })).toThrow(RangeError);
+    expect(() => createClient({ rateLimit: { minIntervalMs: -1 } })).toThrow(RangeError);
+    expect(() => createClient({ cache: { maxEntries: 0 } })).toThrow(RangeError);
   });
 });
 

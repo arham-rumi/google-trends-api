@@ -298,6 +298,7 @@ describe('related searches', () => {
       locale: 'en-US',
       timezone: -300,
       retries: 0,
+      rateLimit: { enabled: false },
       fetch: fakeFetch,
     });
 
@@ -347,14 +348,13 @@ describe('related searches', () => {
     });
 
     expect(requestedUrls.map((url) => url.pathname)).toEqual([
-      '/explore',
       '/trends/api/explore',
       '/trends/api/widgetdata/relatedsearches',
       '/trends/api/widgetdata/relatedsearches',
       '/trends/api/explore',
       '/trends/api/widgetdata/relatedsearches',
     ]);
-    expect(requestedUrls[2]?.searchParams.get('token')).toBe('typescript-token');
-    expect(requestedUrls[3]?.searchParams.get('token')).toBe('node-token');
+    expect(requestedUrls[1]?.searchParams.get('token')).toBe('typescript-token');
+    expect(requestedUrls[2]?.searchParams.get('token')).toBe('node-token');
   });
 });

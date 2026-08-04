@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Serialized request governor with configurable spacing and shared HTTP 429 cooldowns.
+- In-memory LRU result cache with fresh and stale windows.
+- Identical-request deduplication across concurrent callers.
+- `getResultMetadata()`, `clearCache()`, `cacheSize`, and `cooldownRemainingMs`.
+
+### Changed
+
+- Google sessions now warm up lazily only after a session or challenge response.
+- HTTP 429 responses are no longer retried immediately and `Retry-After` controls cooldown timing.
+- Stale cached results are returned during rate limits when available.
+
 ## [0.1.0] - 2026-08-03
 
 ### Added

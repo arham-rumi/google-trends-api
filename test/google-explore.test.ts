@@ -209,6 +209,7 @@ describe('Google Explore flow', () => {
 
     const session = new HttpSession({
       baseUrl: 'https://trends.google.com',
+      rateLimit: { enabled: false },
       fetch: fakeFetch,
       retry: {
         retries: 0,

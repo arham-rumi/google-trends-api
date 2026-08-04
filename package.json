@@ -70,5 +70,8 @@
   },
   "dependencies": {
     "fetch-cookie": "^3.2.0"
+  },
+  "volta": {
+    "node": "24.19.0"
   }
 }

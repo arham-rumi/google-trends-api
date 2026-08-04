@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { RateLimitError, createClient } from '../../src/index.js';
 
-const trends = createClient({
-  locale: 'en-US',
-  timeoutMs: 30_000,
-  retries: 0,
-});
+function createLiveClient() {
+  return createClient({
+    locale: 'en-US',
+    timeoutMs: 30_000,
+    retries: 0,
+  });
+}
 
 const RATE_LIMIT_SKIP_MESSAGE =
   'Google returned HTTP 429, so this live check is inconclusive rather than a package failure.';
@@ -14,7 +16,7 @@ const RATE_LIMIT_SKIP_MESSAGE =
 describe('live Google Trends smoke tests', () => {
   it('fetches tokenized Interest Over Time data', async ({ skip }) => {
     try {
-      const result = await trends.interestOverTime({
+      const result = await createLiveClient().interestOverTime({
         keywords: ['typescript'],
         geo: 'US',
         timeRange: 'today 3-m',
@@ -34,7 +36,7 @@ describe('live Google Trends smoke tests', () => {
 
   it('fetches autocomplete suggestions', async ({ skip }) => {
     try {
-      const result = await trends.autocomplete({
+      const result = await createLiveClient().autocomplete({
         keyword: 'typescript',
         limit: 5,
       });
@@ -54,7 +56,7 @@ describe('live Google Trends smoke tests', () => {
 
   it('fetches the Trending Now RSS feed', async ({ skip }) => {
     try {
-      const result = await trends.trendingNow({
+      const result = await createLiveClient().trendingNow({
         geo: 'US',
         limit: 5,
       });

@@ -18,6 +18,7 @@ A modern, typed, unofficial Google Trends client for Node.js.
 - Trending Now RSS data
 - Search-term and topic autocomplete
 - Cookie-aware sessions, timeouts, retries, abort signals, and typed errors
+- Lazy session warm-up, serialized requests, deduplication, caching, and 429 cooldowns
 
 ## Requirements
 
@@ -53,6 +54,23 @@ for (const point of result.timeline) {
 
 Google Trends values are normalized relative scores, usually from `0` to `100`. They are not absolute search volumes.
 
+## Rate-limit protection and cache metadata
+
+By default, the client serializes requests, spaces them by 2.5 seconds, deduplicates identical concurrent calls, and caches successful results for 15 minutes. HTTP 429 responses are never retried immediately. When a stale cached result is available, it is returned during the shared cooldown.
+
+```ts
+import { getResultMetadata } from '@arham-rumi/google-trends-api';
+
+const result = await trends.interestOverTime({ keywords: 'node.js' });
+console.log(getResultMetadata(result));
+// { source: 'network' | 'cache' | 'stale-cache', stale: boolean, cachedAt?: Date }
+
+trends.clearCache();
+console.log(trends.cooldownRemainingMs);
+```
+
+The cache is per client instance and stored in memory. It does not bypass Google limits; it reduces avoidable requests and keeps applications useful during temporary 429 periods.
+
 ## Client configuration
 
 ```ts
@@ -62,17 +80,28 @@ const trends = createClient({
   timeoutMs: 10_000,
   retries: 2,
   userAgent: 'my-app/1.0 (+https://example.com)',
+  rateLimit: {
+    minIntervalMs: 2_500,
+    cooldownMs: 60_000,
+  },
+  cache: {
+    ttlMs: 15 * 60_000,
+    staleIfErrorMs: 24 * 60 * 60_000,
+    maxEntries: 100,
+  },
 });
 ```
 
-| Option      | Default         | Description                                 |
-| ----------- | --------------- | ------------------------------------------- |
-| `locale`    | `en-US`         | Locale sent to Google Trends.               |
-| `timezone`  | `0`             | Google Trends timezone offset in minutes.   |
-| `timeoutMs` | `10000`         | Timeout for each HTTP attempt.              |
-| `retries`   | `2`             | Additional attempts for temporary failures. |
-| `userAgent` | Package default | User agent sent with requests.              |
-| `fetch`     | Native `fetch`  | Optional custom fetch implementation.       |
+| Option      | Default         | Description                                         |
+| ----------- | --------------- | --------------------------------------------------- |
+| `locale`    | `en-US`         | Locale sent to Google Trends.                       |
+| `timezone`  | `0`             | Google Trends timezone offset in minutes.           |
+| `timeoutMs` | `10000`         | Timeout for each HTTP attempt.                      |
+| `retries`   | `2`             | Additional attempts for temporary non-429 failures. |
+| `userAgent` | Package default | User agent sent with requests.                      |
+| `rateLimit` | See below       | Request spacing and shared HTTP 429 cooldown.       |
+| `cache`     | See below       | Fresh and stale in-memory result caching.           |
+| `fetch`     | Native `fetch`  | Optional custom fetch implementation.               |
 
 ## Interest over time
 

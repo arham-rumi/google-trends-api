@@ -138,6 +138,7 @@ describe('trendingNow', () => {
     const client = createClient({
       locale: 'en-US',
       retries: 0,
+      rateLimit: { enabled: false },
       fetch: fakeFetch,
     });
 
@@ -158,7 +159,10 @@ describe('trendingNow', () => {
       throw new Error('fetch must not be called');
     };
 
-    const client = createClient({ fetch: fakeFetch });
+    const client = createClient({
+      rateLimit: { enabled: false },
+      fetch: fakeFetch,
+    });
 
     await expect(client.trendingNow({ geo: 'Pakistan' })).rejects.toThrow(RangeError);
     await expect(client.trendingNow({ geo: 'PK', limit: 0 })).rejects.toThrow(RangeError);

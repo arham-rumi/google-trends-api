@@ -14,9 +14,10 @@ import type {
   QueryPrimitive,
   RetryOptions,
 } from '../types.js';
+import type { RequestGovernor } from '../rate-limit/governor.js';
 import { resolveRetryOptions, withRetry } from './retry.js';
 
-const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 500, 502, 503, 504]);
 
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE']);
 
@@ -28,6 +29,7 @@ export interface RequestContext {
   defaultHeaders: Headers;
   timeoutMs: number;
   retry: RetryOptions;
+  governor: RequestGovernor;
 }
 
 function serializeQueryValue(value: QueryPrimitive): string | undefined {
@@ -137,11 +139,7 @@ async function createHttpError(
 }
 
 function isRetryableError(error: unknown): boolean {
-  if (
-    error instanceof NetworkError ||
-    error instanceof RequestTimeoutError ||
-    error instanceof RateLimitError
-  ) {
+  if (error instanceof NetworkError || error instanceof RequestTimeoutError) {
     return true;
   }
 
@@ -192,40 +190,41 @@ export async function performRequest(
   }
 
   return withRetry(
-    async () => {
-      const timeoutSignal = AbortSignal.timeout(timeoutMs);
-      const combinedSignal =
-        signal === undefined ? timeoutSignal : AbortSignal.any([signal, timeoutSignal]);
+    async () =>
+      context.governor.execute(async () => {
+        const timeoutSignal = AbortSignal.timeout(timeoutMs);
+        const combinedSignal =
+          signal === undefined ? timeoutSignal : AbortSignal.any([signal, timeoutSignal]);
 
-      try {
-        const response = await context.fetch(url, {
-          ...requestInit,
-          method,
-          headers: mergeHeaders(context.defaultHeaders, headers),
-          signal: combinedSignal,
-        });
+        try {
+          const response = await context.fetch(url, {
+            ...requestInit,
+            method,
+            headers: mergeHeaders(context.defaultHeaders, headers),
+            signal: combinedSignal,
+          });
 
-        if (!response.ok) {
-          throw await createHttpError(response, url);
+          if (!response.ok) {
+            throw await createHttpError(response, url);
+          }
+
+          return response;
+        } catch (error) {
+          if (error instanceof GoogleTrendsError) {
+            throw error;
+          }
+
+          if (signal?.aborted === true) {
+            throw new RequestAbortedError(url.toString(), signal.reason);
+          }
+
+          if (timeoutSignal.aborted) {
+            throw new RequestTimeoutError(url.toString(), timeoutMs, timeoutSignal.reason);
+          }
+
+          throw new NetworkError(url.toString(), error);
         }
-
-        return response;
-      } catch (error) {
-        if (error instanceof GoogleTrendsError) {
-          throw error;
-        }
-
-        if (signal?.aborted === true) {
-          throw new RequestAbortedError(url.toString(), signal.reason);
-        }
-
-        if (timeoutSignal.aborted) {
-          throw new RequestTimeoutError(url.toString(), timeoutMs, timeoutSignal.reason);
-        }
-
-        throw new NetworkError(url.toString(), error);
-      }
-    },
+      }, signal),
     {
       ...retryOptions,
       signal,

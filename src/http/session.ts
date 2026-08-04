@@ -2,6 +2,7 @@ import fetchCookieExport from 'fetch-cookie';
 
 import { HttpStatusError, InvalidResponseError } from '../errors.js';
 import { GOOGLE_EXPLORE_PAGE_PATH, GOOGLE_TRENDS_HOME_PATH } from '../google/constants.js';
+import { RequestGovernor, resolveRateLimitOptions } from '../rate-limit/governor.js';
 import type { FetchLike, HttpRequestOptions, HttpSessionOptions } from '../types.js';
 import { performRequest, type RequestContext } from './request.js';
 import { resolveRetryOptions } from './retry.js';
@@ -59,7 +60,12 @@ export class HttpSession {
       defaultHeaders: new Headers(options.headers),
       timeoutMs,
       retry: resolveRetryOptions(options.retry),
+      governor: new RequestGovernor(resolveRateLimitOptions(options.rateLimit)),
     };
+  }
+
+  public get cooldownRemainingMs(): number {
+    return this.#context.governor.cooldownRemainingMs;
   }
 
   public request(path: string | URL, options: HttpRequestOptions = {}): Promise<Response> {
@@ -99,9 +105,7 @@ export class HttpSession {
         geo: options.geo,
         hl: options.locale,
       },
-      retry: {
-        retries: 1,
-      },
+      retry: false,
     };
 
     if (options.signal !== undefined) {
