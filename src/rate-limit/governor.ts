@@ -13,6 +13,13 @@ export const DEFAULT_RATE_LIMIT_RECOVERY_DELAYS_MS = Object.freeze([
   30 * 60_000,
 ] as const);
 
+const DEFAULT_RATE_LIMIT_KEY = '__default__';
+
+interface EndpointRateLimitState {
+  consecutiveRateLimits: number;
+  cooldownUntil: number;
+}
+
 function wait(delayMs: number, signal?: AbortSignal): Promise<void> {
   if (delayMs <= 0) {
     signal?.throwIfAborted();
@@ -70,52 +77,74 @@ export function resolveRateLimitOptions(options: RateLimitOptions = {}): Resolve
 
 export class RequestGovernor {
   readonly #options: Readonly<ResolvedRateLimitOptions>;
+  readonly #endpointStates = new Map<string, EndpointRateLimitState>();
   #tail: Promise<void> = Promise.resolve();
   #nextStartAt = 0;
-  #cooldownUntil = 0;
-  #consecutiveRateLimits = 0;
 
   public constructor(options: ResolvedRateLimitOptions) {
     this.#options = options;
   }
 
   public get cooldownRemainingMs(): number {
-    return Math.max(0, this.#cooldownUntil - Date.now());
+    let remainingMs = 0;
+
+    for (const state of this.#endpointStates.values()) {
+      remainingMs = Math.max(remainingMs, state.cooldownUntil - Date.now());
+    }
+
+    return Math.max(0, remainingMs);
   }
 
-  public async waitForCooldown(signal?: AbortSignal): Promise<void> {
-    while (this.cooldownRemainingMs > 0) {
-      await wait(this.cooldownRemainingMs, signal);
+  public getCooldownRemainingMs(rateLimitKey?: string): number {
+    const state = this.#endpointStates.get(this.#resolveKey(rateLimitKey));
+    return Math.max(0, (state?.cooldownUntil ?? 0) - Date.now());
+  }
+
+  public async waitForCooldown(signal?: AbortSignal, rateLimitKey?: string): Promise<void> {
+    const remainingMs = (): number =>
+      rateLimitKey === undefined
+        ? this.cooldownRemainingMs
+        : this.getCooldownRemainingMs(rateLimitKey);
+
+    while (remainingMs() > 0) {
+      await wait(remainingMs(), signal);
     }
   }
 
-  public markOperationSucceeded(): void {
-    this.#consecutiveRateLimits = 0;
-    this.#cooldownUntil = 0;
+  public markOperationSucceeded(rateLimitKey?: string): void {
+    this.#endpointStates.delete(this.#resolveKey(rateLimitKey));
   }
 
-  public execute<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  public execute<T>(
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+    rateLimitKey?: string,
+  ): Promise<T> {
     if (!this.#options.enabled) {
       return operation();
     }
 
+    const resolvedKey = this.#resolveKey(rateLimitKey);
     const run = async (): Promise<T> => {
       signal?.throwIfAborted();
 
-      const allowedAt = Math.max(this.#nextStartAt, this.#cooldownUntil);
+      const state = this.#getState(resolvedKey);
+      const allowedAt = Math.max(this.#nextStartAt, state.cooldownUntil);
       await wait(allowedAt - Date.now(), signal);
       signal?.throwIfAborted();
 
       this.#nextStartAt = Date.now() + this.#options.minIntervalMs;
 
       try {
-        return await operation();
+        const value = await operation();
+        this.#endpointStates.delete(resolvedKey);
+        return value;
       } catch (error) {
         if (error instanceof RateLimitError) {
           const configuredDelay = this.#options.recovery
             ? this.#options.recoveryDelaysMs[
                 Math.min(
-                  this.#consecutiveRateLimits,
+                  state.consecutiveRateLimits,
                   Math.max(0, this.#options.recoveryDelaysMs.length - 1),
                 )
               ]
@@ -123,8 +152,9 @@ export class RequestGovernor {
           const fallbackDelay = configuredDelay ?? this.#options.cooldownMs;
           const cooldownMs = Math.max(error.retryAfterMs ?? 0, fallbackDelay);
 
-          this.#consecutiveRateLimits += 1;
-          this.#cooldownUntil = Math.max(this.#cooldownUntil, Date.now() + cooldownMs);
+          state.consecutiveRateLimits += 1;
+          state.cooldownUntil = Math.max(state.cooldownUntil, Date.now() + cooldownMs);
+          this.#endpointStates.set(resolvedKey, state);
         }
 
         throw error;
@@ -138,5 +168,18 @@ export class RequestGovernor {
     );
 
     return result;
+  }
+
+  #resolveKey(rateLimitKey?: string): string {
+    return rateLimitKey ?? DEFAULT_RATE_LIMIT_KEY;
+  }
+
+  #getState(rateLimitKey: string): EndpointRateLimitState {
+    return (
+      this.#endpointStates.get(rateLimitKey) ?? {
+        consecutiveRateLimits: 0,
+        cooldownUntil: 0,
+      }
+    );
   }
 }

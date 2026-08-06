@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { InvalidResponseError } from '../src/errors.js';
+import { InvalidResponseError, RateLimitError } from '../src/errors.js';
 import {
   normalizeAutocompleteKeyword,
   parseAutocompleteResponse,
 } from '../src/google/autocomplete.js';
-import { createClient } from '../src/index.js';
+import { createClient, getResultMetadata } from '../src/index.js';
 import type { FetchLike } from '../src/types.js';
 
 function responseWithUrl(body: string, url: string, init: ResponseInit = {}): Response {
@@ -151,6 +151,71 @@ describe('autocomplete', () => {
     expect(requestedUrls[0]?.pathname).toBe('/trends/api/autocomplete/C%2B%2B%20guide');
     expect(requestedUrls[0]?.searchParams.get('hl')).toBe('en-US');
     expect(result.suggestions[0]?.mid).toBe('/m/0n50hxv');
+  });
+
+  it('does not use stale autocomplete data for an unrelated Explore cooldown', async () => {
+    let autocompleteRequests = 0;
+    let exploreRateLimited = false;
+
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+
+      if (url.pathname.startsWith('/trends/api/autocomplete/')) {
+        autocompleteRequests += 1;
+        const title = autocompleteRequests === 1 ? 'TypeScript old' : 'TypeScript fresh';
+
+        return responseWithUrl(
+          `)]}',\n${JSON.stringify({
+            default: {
+              topics: [
+                {
+                  mid: '/m/0n50hxv',
+                  title,
+                  type: 'Programming language',
+                },
+              ],
+            },
+          })}`,
+          url.toString(),
+        );
+      }
+
+      if (url.pathname === '/trends/api/explore' && exploreRateLimited) {
+        return responseWithUrl('Too many requests', url.toString(), { status: 429 });
+      }
+
+      return responseWithUrl('Not found', url.toString(), { status: 404 });
+    };
+
+    const client = createClient({
+      retries: 0,
+      rateLimit: {
+        minIntervalMs: 0,
+        cooldownMs: 1_000,
+        recovery: false,
+      },
+      cache: {
+        ttlMs: 1,
+        staleIfErrorMs: 60_000,
+      },
+      fetch: fakeFetch,
+    });
+
+    await expect(client.autocomplete({ keyword: 'typescript' })).resolves.toMatchObject({
+      suggestions: [{ title: 'TypeScript old' }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    exploreRateLimited = true;
+    await expect(client.interestOverTime({ keywords: 'TypeScript' })).rejects.toBeInstanceOf(
+      RateLimitError,
+    );
+
+    const refreshed = await client.autocomplete({ keyword: 'typescript' });
+
+    expect(refreshed.suggestions[0]?.title).toBe('TypeScript fresh');
+    expect(autocompleteRequests).toBe(2);
+    expect(getResultMetadata(refreshed)?.source).toBe('network');
   });
 
   it('rejects invalid options before making a request', async () => {

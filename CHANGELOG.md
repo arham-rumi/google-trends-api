@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-05
+
+### Added
+
+- Added a full live-data smoke command covering warm-up, autocomplete, Trending Now, interest over time, interest by region, related queries, and related topics.
+- Expanded scheduled live integration coverage to all public data methods.
+
+### Fixed
+
+- Kept stale-cache fallback endpoint-specific so a cooldown on one Google Trends route does not suppress fresh requests to unrelated routes.
+
 ## [0.2.1] - 2026-08-05
 
 ### Fixed
@@ -51,7 +62,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Packed-package consumer tests for both ESM and CommonJS.
 - Tag-based npm publishing workflow prepared for Trusted Publishing.
 
-[Unreleased]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/arham-rumi/google-trends-api/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/arham-rumi/google-trends-api/releases/tag/v0.1.0

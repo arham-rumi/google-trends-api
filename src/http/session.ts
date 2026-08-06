@@ -48,7 +48,6 @@ export class HttpSession {
     }
 
     this.#baseFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-
     this.#context = {
       baseUrl: new URL(options.baseUrl),
       fetch: this.#createCookieFetch(),
@@ -67,16 +66,26 @@ export class HttpSession {
     return makeFetchCookie(this.#baseFetch as typeof globalThis.fetch) as FetchLike;
   }
 
+  #resolveRateLimitKey(path: string | URL): string {
+    return new URL(path instanceof URL ? path.toString() : path, this.#context.baseUrl).pathname;
+  }
+
   public get cooldownRemainingMs(): number {
     return this.#context.governor.cooldownRemainingMs;
   }
 
-  public waitForCooldown(signal?: AbortSignal): Promise<void> {
-    return this.#context.governor.waitForCooldown(signal);
+  public getCooldownRemainingMs(path: string | URL): number {
+    return this.#context.governor.getCooldownRemainingMs(this.#resolveRateLimitKey(path));
   }
 
-  public markOperationSucceeded(): void {
-    this.#context.governor.markOperationSucceeded();
+  public waitForCooldown(signal?: AbortSignal, path?: string | URL): Promise<void> {
+    const rateLimitKey = path === undefined ? undefined : this.#resolveRateLimitKey(path);
+    return this.#context.governor.waitForCooldown(signal, rateLimitKey);
+  }
+
+  public markOperationSucceeded(path?: string | URL): void {
+    const rateLimitKey = path === undefined ? undefined : this.#resolveRateLimitKey(path);
+    this.#context.governor.markOperationSucceeded(rateLimitKey);
   }
 
   public resetCookies(): void {

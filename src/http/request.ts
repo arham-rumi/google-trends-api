@@ -6,6 +6,7 @@ import {
   RequestAbortedError,
   RequestTimeoutError,
 } from '../errors.js';
+import type { RequestGovernor } from '../rate-limit/governor.js';
 import type {
   FetchLike,
   HttpHeadersInit,
@@ -14,11 +15,9 @@ import type {
   QueryPrimitive,
   RetryOptions,
 } from '../types.js';
-import type { RequestGovernor } from '../rate-limit/governor.js';
 import { resolveRetryOptions, withRetry } from './retry.js';
 
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 500, 502, 503, 504]);
-
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE']);
 
 const MAX_ERROR_BODY_LENGTH = 4_000;
@@ -56,7 +55,6 @@ export function buildUrl(baseUrl: URL, path: string | URL, query?: QueryParamete
 
     for (const value of values) {
       const serializedValue = serializeQueryValue(value);
-
       if (serializedValue !== undefined) {
         url.searchParams.append(key, serializedValue);
       }
@@ -176,7 +174,6 @@ export async function performRequest(
   const method = (requestInit.method ?? 'GET').toUpperCase();
 
   let retryOptions = resolveRetryOptions(context.retry);
-
   if (requestRetry === false || (!IDEMPOTENT_METHODS.has(method) && requestRetry === undefined)) {
     retryOptions = {
       ...retryOptions,
@@ -191,40 +188,44 @@ export async function performRequest(
 
   return withRetry(
     async () =>
-      context.governor.execute(async () => {
-        const timeoutSignal = AbortSignal.timeout(timeoutMs);
-        const combinedSignal =
-          signal === undefined ? timeoutSignal : AbortSignal.any([signal, timeoutSignal]);
+      context.governor.execute(
+        async () => {
+          const timeoutSignal = AbortSignal.timeout(timeoutMs);
+          const combinedSignal =
+            signal === undefined ? timeoutSignal : AbortSignal.any([signal, timeoutSignal]);
 
-        try {
-          const response = await context.fetch(url, {
-            ...requestInit,
-            method,
-            headers: mergeHeaders(context.defaultHeaders, headers),
-            signal: combinedSignal,
-          });
+          try {
+            const response = await context.fetch(url, {
+              ...requestInit,
+              method,
+              headers: mergeHeaders(context.defaultHeaders, headers),
+              signal: combinedSignal,
+            });
 
-          if (!response.ok) {
-            throw await createHttpError(response, url);
+            if (!response.ok) {
+              throw await createHttpError(response, url);
+            }
+
+            return response;
+          } catch (error) {
+            if (error instanceof GoogleTrendsError) {
+              throw error;
+            }
+
+            if (signal?.aborted === true) {
+              throw new RequestAbortedError(url.toString(), signal.reason);
+            }
+
+            if (timeoutSignal.aborted) {
+              throw new RequestTimeoutError(url.toString(), timeoutMs, timeoutSignal.reason);
+            }
+
+            throw new NetworkError(url.toString(), error);
           }
-
-          return response;
-        } catch (error) {
-          if (error instanceof GoogleTrendsError) {
-            throw error;
-          }
-
-          if (signal?.aborted === true) {
-            throw new RequestAbortedError(url.toString(), signal.reason);
-          }
-
-          if (timeoutSignal.aborted) {
-            throw new RequestTimeoutError(url.toString(), timeoutMs, timeoutSignal.reason);
-          }
-
-          throw new NetworkError(url.toString(), error);
-        }
-      }, signal),
+        },
+        signal,
+        url.pathname,
+      ),
     {
       ...retryOptions,
       signal,

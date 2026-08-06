@@ -7,6 +7,14 @@ import {
   type AutocompleteResult,
 } from './google/autocomplete.js';
 import {
+  GOOGLE_AUTOCOMPLETE_PATH,
+  GOOGLE_EXPLORE_PATH,
+  GOOGLE_INTEREST_BY_REGION_PATH,
+  GOOGLE_INTEREST_OVER_TIME_PATH,
+  GOOGLE_RELATED_SEARCHES_PATH,
+  GOOGLE_TRENDING_NOW_PATH,
+} from './google/constants.js';
+import {
   fetchInterestByRegion,
   type InterestByRegionOptions,
   type InterestByRegionResult,
@@ -29,8 +37,8 @@ import {
   type TrendingNowResult,
 } from './google/trending-now.js';
 import { HttpSession, type HttpSessionWarmupOptions } from './http/session.js';
-import { createRequestKey } from './rate-limit/request-key.js';
 import { resolveRateLimitOptions } from './rate-limit/governor.js';
+import { createRequestKey } from './rate-limit/request-key.js';
 import { attachResultMetadata, type ResultMetadata } from './result-metadata.js';
 import type { GoogleTrendsClientOptions, ResolvedGoogleTrendsClientOptions } from './types.js';
 
@@ -154,7 +162,6 @@ export class GoogleTrendsClient {
   public constructor(options: GoogleTrendsClientOptions = {}) {
     this.options = Object.freeze(resolveOptions(options));
     this.#cache = new MemoryCache(this.options.cache);
-
     this.#session = new HttpSession({
       baseUrl: GOOGLE_TRENDS_BASE_URL,
       timeoutMs: this.options.timeoutMs,
@@ -188,7 +195,6 @@ export class GoogleTrendsClient {
 
   #createWarmupOptions(signal?: AbortSignal): HttpSessionWarmupOptions {
     const geo = inferRegionFromLocale(this.options.locale);
-
     return {
       locale: this.options.locale,
       ...(geo === undefined ? {} : { geo }),
@@ -223,8 +229,8 @@ export class GoogleTrendsClient {
     }
   }
 
-  async #refreshSession(signal: AbortSignal): Promise<void> {
-    await this.#session.waitForCooldown(signal);
+  async #refreshSession(rateLimitedUrl: string, signal: AbortSignal): Promise<void> {
+    await this.#session.waitForCooldown(signal, rateLimitedUrl);
     signal.throwIfAborted();
 
     this.#session.resetCookies();
@@ -243,18 +249,16 @@ export class GoogleTrendsClient {
       recoverRateLimits && this.options.rateLimit.enabled && this.options.rateLimit.recovery;
     const maxRecoveryAttempts = this.options.rateLimit.recoveryDelaysMs.length;
     let recoveryAttempts = 0;
-    let refreshSession = false;
+    let rateLimitedUrl: string | undefined;
 
     while (true) {
       try {
-        if (refreshSession) {
-          await this.#refreshSession(signal);
-          refreshSession = false;
+        if (rateLimitedUrl !== undefined) {
+          await this.#refreshSession(rateLimitedUrl, signal);
+          rateLimitedUrl = undefined;
         }
 
-        const value = await this.#runTokenizedOnce(operation, signal);
-        this.#session.markOperationSucceeded();
-        return value;
+        return await this.#runTokenizedOnce(operation, signal);
       } catch (error) {
         if (
           !(error instanceof RateLimitError) ||
@@ -265,7 +269,7 @@ export class GoogleTrendsClient {
         }
 
         recoveryAttempts += 1;
-        refreshSession = true;
+        rateLimitedUrl = error.url;
       }
     }
   }
@@ -312,7 +316,6 @@ export class GoogleTrendsClient {
       }
 
       signal?.addEventListener('abort', onAbort, { once: true });
-
       entry.promise.then(
         (outcome) => finish(() => resolve(this.#materialize(outcome))),
         (error: unknown) => finish(() => reject(error)),
@@ -328,10 +331,15 @@ export class GoogleTrendsClient {
     };
   }
 
+  #hasRelevantCooldown(paths: readonly (string | URL)[]): boolean {
+    return paths.some((path) => this.#session.getCooldownRemainingMs(path) > 0);
+  }
+
   #execute<T extends object>(options: {
     method: string;
     input: { signal?: AbortSignal };
     tokenized: boolean;
+    rateLimitPaths: readonly (string | URL)[];
     operation: (signal: AbortSignal) => Promise<T>;
   }): Promise<T> {
     const signal = options.input.signal;
@@ -348,7 +356,7 @@ export class GoogleTrendsClient {
       return Promise.resolve(this.#materialize(this.#cacheOutcome(cached)));
     }
 
-    if (cached?.state === 'stale' && this.#session.cooldownRemainingMs > 0) {
+    if (cached?.state === 'stale' && this.#hasRelevantCooldown(options.rateLimitPaths)) {
       return Promise.resolve(this.#materialize(this.#cacheOutcome(cached)));
     }
 
@@ -370,7 +378,6 @@ export class GoogleTrendsClient {
           : await options.operation(controller.signal);
 
         this.#cache.set(key, value);
-
         return {
           value,
           source: 'network',
@@ -391,7 +398,6 @@ export class GoogleTrendsClient {
     };
 
     this.#inflight.set(key, entry as InflightEntry<object>);
-
     const settle = (): void => {
       entry.settled = true;
       this.#inflight.delete(key);
@@ -417,6 +423,7 @@ export class GoogleTrendsClient {
       method: 'interestOverTime',
       input,
       tokenized: true,
+      rateLimitPaths: [GOOGLE_EXPLORE_PATH, GOOGLE_INTEREST_OVER_TIME_PATH],
       operation: (signal) =>
         fetchInterestOverTime(this.#session, {
           ...input,
@@ -433,6 +440,7 @@ export class GoogleTrendsClient {
       method: 'interestByRegion',
       input,
       tokenized: true,
+      rateLimitPaths: [GOOGLE_EXPLORE_PATH, GOOGLE_INTEREST_BY_REGION_PATH],
       operation: (signal) =>
         fetchInterestByRegion(this.#session, {
           ...input,
@@ -449,6 +457,7 @@ export class GoogleTrendsClient {
       method: 'relatedQueries',
       input,
       tokenized: true,
+      rateLimitPaths: [GOOGLE_EXPLORE_PATH, GOOGLE_RELATED_SEARCHES_PATH],
       operation: (signal) =>
         fetchRelatedQueries(this.#session, {
           ...input,
@@ -465,6 +474,7 @@ export class GoogleTrendsClient {
       method: 'relatedTopics',
       input,
       tokenized: true,
+      rateLimitPaths: [GOOGLE_EXPLORE_PATH, GOOGLE_RELATED_SEARCHES_PATH],
       operation: (signal) =>
         fetchRelatedTopics(this.#session, {
           ...input,
@@ -481,6 +491,7 @@ export class GoogleTrendsClient {
       method: 'autocomplete',
       input,
       tokenized: false,
+      rateLimitPaths: [`${GOOGLE_AUTOCOMPLETE_PATH}${encodeURIComponent(input.keyword.trim())}`],
       operation: (signal) =>
         fetchAutocomplete(this.#session, {
           ...input,
@@ -496,6 +507,7 @@ export class GoogleTrendsClient {
       method: 'trendingNow',
       input,
       tokenized: false,
+      rateLimitPaths: [GOOGLE_TRENDING_NOW_PATH],
       operation: (signal) =>
         fetchTrendingNow(this.#session, {
           ...input,

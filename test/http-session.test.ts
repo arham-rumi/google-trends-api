@@ -10,7 +10,6 @@ describe('HttpSession', () => {
 
     const fakeFetch: FetchLike = async () => {
       requestCount += 1;
-
       if (requestCount === 1) {
         return new Response('Temporarily unavailable', {
           status: 503,
@@ -61,13 +60,11 @@ describe('HttpSession', () => {
     });
 
     await expect(session.getText('/data')).rejects.toBeInstanceOf(HttpStatusError);
-
     expect(requestCount).toBe(1);
   });
 
   it('stores and sends session cookies', async () => {
     const receivedCookies: string[] = [];
-
     const fakeFetch: FetchLike = async (input, init) => {
       const cookie = new Headers(init?.headers).get('cookie');
       receivedCookies.push(cookie ?? '');
@@ -83,7 +80,6 @@ describe('HttpSession', () => {
           : new Response('second response', {
               status: 200,
             });
-
       const requestUrl = input instanceof Request ? input.url : input.toString();
 
       Object.defineProperty(response, 'url', {
@@ -171,7 +167,6 @@ describe('HttpSession', () => {
 
     const fakeFetch: FetchLike = async () => {
       requestCount += 1;
-
       return new Response('Too many requests', {
         status: 429,
         headers: { 'retry-after': '60' },
@@ -193,13 +188,44 @@ describe('HttpSession', () => {
     expect(requestCount).toBe(1);
   });
 
+  it('tracks rate-limit cooldowns by endpoint path', async () => {
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+
+      return new Response(url.pathname === '/limited' ? 'Too many requests' : 'ok', {
+        status: url.pathname === '/limited' ? 429 : 200,
+      });
+    };
+
+    const session = new HttpSession({
+      baseUrl: 'https://example.test',
+      rateLimit: {
+        minIntervalMs: 0,
+        cooldownMs: 1_000,
+        recovery: false,
+      },
+      fetch: fakeFetch,
+      retry: { retries: 0 },
+    });
+
+    await expect(session.getText('/limited?first=1')).rejects.toBeInstanceOf(RateLimitError);
+
+    expect(session.getCooldownRemainingMs('/limited?second=2')).toBeGreaterThan(0);
+    expect(session.getCooldownRemainingMs('/healthy')).toBe(0);
+
+    await expect(session.getText('/healthy', { signal: AbortSignal.timeout(100) })).resolves.toBe(
+      'ok',
+    );
+
+    expect(session.getCooldownRemainingMs('/limited')).toBeGreaterThan(0);
+  });
+
   it('can replace its cookie jar during rate-limit recovery', async () => {
     const receivedCookies: string[] = [];
 
     const fakeFetch: FetchLike = async (input, init) => {
       const url = input instanceof Request ? input.url : input.toString();
       receivedCookies.push(new Headers(init?.headers).get('cookie') ?? '');
-
       const response = new Response('ok', {
         status: 200,
         ...(receivedCookies.length === 1
