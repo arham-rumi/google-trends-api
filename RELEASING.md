@@ -12,9 +12,15 @@ This package uses Semantic Versioning and Conventional Commits.
 ```bash
 npm ci
 npm run release:check
+npm run smoke:live
+npm run verify:interest-live
 ```
 
-The release check runs the full test and package validation suite, creates the npm tarball, installs it into a temporary consumer project, and verifies both ESM and CommonJS imports.
+`release:check` runs the deterministic test and package validation suite, creates the npm tarball, installs it into a temporary consumer project, and verifies both ESM and CommonJS imports.
+
+`smoke:live` is the broad real-Google-data gate across the public data methods. `verify:interest-live` is a deeper Interest Over Time validator that compares the package output with the raw Google timeline response used for the same request. Keep these live checks separate from normal CI because Google may rate-limit or challenge external runners.
+
+The deep live validator supports optional environment overrides such as `GOOGLE_TRENDS_TEST_KEYWORDS`, `GOOGLE_TRENDS_TEST_GEO`, and `GOOGLE_TRENDS_TEST_TIME_RANGE`.
 
 ## First release: `0.1.0`
 

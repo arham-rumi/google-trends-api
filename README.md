@@ -286,13 +286,25 @@ npm run build
 node examples/basic.mjs
 ```
 
-Run the opt-in live smoke tests:
+Run the opt-in live integration suite:
 
 ```bash
 npm run test:integration
 ```
 
-The live suite calls Google endpoints and may fail when Google changes an endpoint, presents a challenge page, or rate-limits the runner. GitHub Actions runs this suite weekly and also supports manual runs.
+Run the broad real-data smoke test against the built package:
+
+```bash
+npm run smoke:live
+```
+
+Run the deep Interest Over Time validator, which compares parsed package output with the raw Google timeline response for the same request:
+
+```bash
+npm run verify:interest-live
+```
+
+The live checks call Google endpoints and may fail when Google changes an endpoint, presents a challenge page, or rate-limits the runner. They intentionally remain separate from the deterministic unit-test pipeline. GitHub Actions runs the live integration suite weekly and also supports manual runs.
 
 ## Limitations and responsible use
 

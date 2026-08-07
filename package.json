@@ -1,6 +1,6 @@
 {
   "name": "@arham-rumi/google-trends-api",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Modern, typed, unofficial Google Trends client for Node.js.",
   "type": "module",
   "license": "MIT",
@@ -44,7 +44,8 @@
     "prepublishOnly": "npm run check",
     "test:package": "npm run build && node scripts/test-package.mjs",
     "release:check": "npm run check && npm run test:package && npm publish --dry-run --ignore-scripts",
-    "smoke:live": "npm run build && node scripts/live-smoke.mjs"
+    "smoke:live": "npm run build && node scripts/live-smoke.mjs",
+    "verify:interest-live": "npm run build && node scripts/verify-interest-over-time-live.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",

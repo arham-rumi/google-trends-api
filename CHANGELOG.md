@@ -6,11 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [0.2.2] - 2026-08-05
+## 0.2.3 - 2026-08-07
+
+- Added deep live validation for Interest Over Time.
+- Added `npm run verify:interest-live`.
+- Documented the live pre-release verification workflow.
+
+## [0.2.2] - 2026-08-07
 
 ### Added
 
 - Added a full live-data smoke command covering warm-up, autocomplete, Trending Now, interest over time, interest by region, related queries, and related topics.
+- Added a deep Interest Over Time live validator that compares package output with the raw Google timeline response for the same request.
 - Expanded scheduled live integration coverage to all public data methods.
 
 ### Fixed
