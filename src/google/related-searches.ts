@@ -358,13 +358,12 @@ async function requestRelatedPayload(
   };
 }
 
-async function fetchRelatedWidgets(
+async function fetchWidgetsForComparisonItems(
   session: HttpSession,
   input: FetchRelatedSearchesOptions,
-  widgetId: GoogleWidgetId,
-): Promise<WidgetKeywordPair[]> {
-  const comparisonItems = buildRelatedSearchComparisonItems(input);
-  const widgets = await fetchExploreWidgets(session, {
+  comparisonItems: readonly ExploreComparisonItemInput[],
+): Promise<ExploreWidget[]> {
+  return fetchExploreWidgets(session, {
     comparisonItems,
     locale: input.locale,
     timezone: input.timezone,
@@ -372,6 +371,36 @@ async function fetchRelatedWidgets(
     property: input.property ?? '',
     ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
+}
+
+async function fetchRelatedWidgets(
+  session: HttpSession,
+  input: FetchRelatedSearchesOptions,
+  widgetId: GoogleWidgetId,
+): Promise<WidgetKeywordPair[]> {
+  const comparisonItems = buildRelatedSearchComparisonItems(input);
+  const widgets = await fetchWidgetsForComparisonItems(session, input, comparisonItems);
+  const candidateCount = widgets.filter((widget) => matchesWidgetId(widget, widgetId)).length;
+
+  // Google can omit RELATED_TOPICS widgets from multi-keyword Explore responses even
+  // though the same widgets are available when each keyword is explored on its own.
+  // Preserve the public 1-5 keyword API by falling back to one Explore request per
+  // keyword only when the comparison response cannot satisfy all requested topics.
+  if (
+    widgetId === GOOGLE_WIDGET_IDS.relatedTopics &&
+    comparisonItems.length > 1 &&
+    candidateCount < comparisonItems.length
+  ) {
+    const pairs: WidgetKeywordPair[] = [];
+
+    for (const comparisonItem of comparisonItems) {
+      input.signal?.throwIfAborted();
+      const singleWidgets = await fetchWidgetsForComparisonItems(session, input, [comparisonItem]);
+      pairs.push(...pairWidgetsWithKeywords(singleWidgets, widgetId, [comparisonItem.keyword]));
+    }
+
+    return pairs;
+  }
 
   return pairWidgetsWithKeywords(
     widgets,

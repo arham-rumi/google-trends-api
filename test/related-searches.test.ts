@@ -357,4 +357,187 @@ describe('related searches', () => {
     expect(requestedUrls[1]?.searchParams.get('token')).toBe('typescript-token');
     expect(requestedUrls[2]?.searchParams.get('token')).toBe('node-token');
   });
+
+  it('falls back to per-keyword Explore when compared topic widgets are omitted', async () => {
+    const requestedUrls: URL[] = [];
+
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      requestedUrls.push(url);
+
+      if (url.pathname === '/explore') {
+        return responseWithUrl('<html>ready</html>', url.toString());
+      }
+
+      if (url.pathname === '/trends/api/explore') {
+        const request = JSON.parse(url.searchParams.get('req') ?? '{}') as {
+          comparisonItem?: { keyword?: string }[];
+        };
+        const keywords = request.comparisonItem?.map((item) => item.keyword ?? '') ?? [];
+
+        if (keywords.length > 1) {
+          return responseWithUrl(
+            `)]}',\n${JSON.stringify({
+              widgets: [
+                {
+                  id: 'RELATED_QUERIES_0',
+                  token: 'comparison-query-token',
+                  request: widgetRequest(keywords[0] ?? ''),
+                },
+              ],
+            })}`,
+            url.toString(),
+          );
+        }
+
+        const keyword = keywords[0];
+
+        if (keyword === 'TypeScript') {
+          return responseWithUrl(
+            `)]}',\n${JSON.stringify({
+              widgets: [
+                {
+                  id: 'RELATED_TOPICS',
+                  token: 'typescript-topic-token',
+                  request: widgetRequest('TypeScript'),
+                },
+              ],
+            })}`,
+            url.toString(),
+          );
+        }
+
+        if (keyword === 'Node.js') {
+          return responseWithUrl(
+            `)]}',\n${JSON.stringify({
+              widgets: [
+                {
+                  id: 'RELATED_TOPICS',
+                  token: 'node-topic-token',
+                  request: widgetRequest('Node.js'),
+                },
+              ],
+            })}`,
+            url.toString(),
+          );
+        }
+      }
+
+      if (url.pathname === '/trends/api/widgetdata/relatedsearches') {
+        const token = url.searchParams.get('token');
+
+        if (token === 'typescript-topic-token') {
+          return responseWithUrl(
+            `)]}',\n${JSON.stringify({
+              default: {
+                rankedList: [
+                  {
+                    rankedKeyword: [
+                      {
+                        topic: {
+                          mid: '/m/07sbkfb',
+                          title: 'TypeScript',
+                          type: 'Programming language',
+                        },
+                        value: 100,
+                        formattedValue: '100',
+                      },
+                    ],
+                  },
+                ],
+              },
+            })}`,
+            url.toString(),
+          );
+        }
+
+        if (token === 'node-topic-token') {
+          return responseWithUrl(
+            `)]}',\n${JSON.stringify({
+              default: {
+                rankedList: [
+                  {
+                    rankedKeyword: [
+                      {
+                        topic: {
+                          title: 'Node.js',
+                          type: 'Runtime system',
+                        },
+                        value: 100,
+                        formattedValue: '100',
+                      },
+                    ],
+                  },
+                ],
+              },
+            })}`,
+            url.toString(),
+          );
+        }
+      }
+
+      return responseWithUrl('Not found', url.toString(), { status: 404 });
+    };
+
+    const client = createClient({
+      locale: 'en-US',
+      timezone: -300,
+      retries: 0,
+      rateLimit: { enabled: false },
+      fetch: fakeFetch,
+    });
+
+    const results = await client.relatedTopics({
+      keywords: ['TypeScript', 'Node.js'],
+      geo: 'US',
+    });
+
+    expect(results).toEqual([
+      {
+        keyword: 'TypeScript',
+        top: [
+          {
+            topic: {
+              mid: '/m/07sbkfb',
+              title: 'TypeScript',
+              type: 'Programming language',
+            },
+            value: 100,
+            formattedValue: '100',
+          },
+        ],
+        rising: [],
+      },
+      {
+        keyword: 'Node.js',
+        top: [
+          {
+            topic: {
+              title: 'Node.js',
+              type: 'Runtime system',
+            },
+            value: 100,
+            formattedValue: '100',
+          },
+        ],
+        rising: [],
+      },
+    ]);
+
+    expect(requestedUrls.map((url) => url.pathname)).toEqual([
+      '/trends/api/explore',
+      '/trends/api/explore',
+      '/trends/api/explore',
+      '/trends/api/widgetdata/relatedsearches',
+      '/trends/api/widgetdata/relatedsearches',
+    ]);
+    expect(requestedUrls[0]?.searchParams.get('req')).toContain('TypeScript');
+    expect(requestedUrls[0]?.searchParams.get('req')).toContain('Node.js');
+    expect(requestedUrls[1]?.searchParams.get('req')).toContain('TypeScript');
+    expect(requestedUrls[1]?.searchParams.get('req')).not.toContain('Node.js');
+    expect(requestedUrls[2]?.searchParams.get('req')).toContain('Node.js');
+    expect(requestedUrls[2]?.searchParams.get('req')).not.toContain('TypeScript');
+    expect(requestedUrls[3]?.searchParams.get('token')).toBe('typescript-topic-token');
+    expect(requestedUrls[4]?.searchParams.get('token')).toBe('node-topic-token');
+  });
 });

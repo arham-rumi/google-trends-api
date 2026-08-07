@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## 0.2.4 - 2026-08-08
+
+### Fixed
+
+- Fixed `relatedTopics()` for multi-keyword requests when Google omits
+  `RELATED_TOPICS` widgets from comparison Explore responses.
+- Added per-keyword Explore fallback while preserving the original keyword order.
+
+### Testing
+
+- Added deep live verification for Interest By Region.
+- Added deep live verification for Related Queries.
+- Added deep live verification for Related Topics.
+- Added deep live verification for Trending Now.
+- Added deep live verification for Autocomplete.
+- Verified package output against Google's raw responses for all supported
+  Google Trends data endpoints.
+
 ## 0.2.3 - 2026-08-07
 
 - Added deep live validation for Interest Over Time.
