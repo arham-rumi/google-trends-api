@@ -1,9 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { CoordinatedCacheStore, ResolvedCacheCoordinationOptions } from '../cache/types.js';
+import type { RequestPacingOutcome } from './governor.js';
+import type { ResolvedAdaptivePacingOptions } from '../types.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const ADAPTIVE_PACING_STATE_TTL_MS = 24 * 60 * 60_000;
+
+interface AdaptivePacingState {
+  intervalMs: number;
+  successfulRequests: number;
+}
 
 function wait(delayMs: number, signal?: AbortSignal): Promise<void> {
   if (delayMs <= 0) {
@@ -44,6 +52,38 @@ function decodeTimestamp(value: Uint8Array | undefined): number | undefined {
 
   const timestamp = Number(decoder.decode(value));
   return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function decodeAdaptivePacingState(value: Uint8Array | undefined): AdaptivePacingState | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  try {
+    const decoded: unknown = JSON.parse(decoder.decode(value));
+
+    if (
+      typeof decoded !== 'object' ||
+      decoded === null ||
+      !('intervalMs' in decoded) ||
+      !('successfulRequests' in decoded) ||
+      typeof decoded.intervalMs !== 'number' ||
+      !Number.isFinite(decoded.intervalMs) ||
+      decoded.intervalMs < 0 ||
+      typeof decoded.successfulRequests !== 'number' ||
+      !Number.isInteger(decoded.successfulRequests) ||
+      decoded.successfulRequests < 0
+    ) {
+      return undefined;
+    }
+
+    return {
+      intervalMs: decoded.intervalMs,
+      successfulRequests: decoded.successfulRequests,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizePath(path: string | URL): string {
@@ -115,6 +155,118 @@ export class PersistentLease {
   }
 }
 
+class AdaptivePacingLease {
+  public readonly intervalMs: number;
+
+  readonly #lease: PersistentLease;
+  readonly #store: CoordinatedCacheStore;
+  readonly #stateKey: string;
+  readonly #nextRequestAtKey: string;
+  readonly #baseIntervalMs: number;
+  readonly #adaptive: Readonly<ResolvedAdaptivePacingOptions>;
+  readonly #state: AdaptivePacingState;
+  #released = false;
+
+  public constructor(options: {
+    lease: PersistentLease;
+    store: CoordinatedCacheStore;
+    stateKey: string;
+    nextRequestAtKey: string;
+    baseIntervalMs: number;
+    adaptive: Readonly<ResolvedAdaptivePacingOptions>;
+    state: AdaptivePacingState;
+  }) {
+    this.#lease = options.lease;
+    this.#store = options.store;
+    this.#stateKey = options.stateKey;
+    this.#nextRequestAtKey = options.nextRequestAtKey;
+    this.#baseIntervalMs = options.baseIntervalMs;
+    this.#adaptive = options.adaptive;
+    this.#state = options.state;
+    this.intervalMs = options.state.intervalMs;
+  }
+
+  public async release(outcome: RequestPacingOutcome = 'error'): Promise<void> {
+    if (this.#released) {
+      return;
+    }
+
+    this.#released = true;
+    let updateFailed = false;
+    let updateFailure: unknown;
+
+    if (this.#adaptive.enabled) {
+      try {
+        this.#recordOutcome(outcome);
+        await this.#store.set(
+          this.#stateKey,
+          encoder.encode(JSON.stringify(this.#state)),
+          ADAPTIVE_PACING_STATE_TTL_MS,
+        );
+
+        if (outcome === 'rate-limit') {
+          const nextRequestAt = Date.now() + this.#state.intervalMs;
+          await this.#store.set(
+            this.#nextRequestAtKey,
+            encoder.encode(String(nextRequestAt)),
+            Math.max(1, this.#state.intervalMs),
+          );
+        }
+      } catch (error) {
+        updateFailed = true;
+        updateFailure = error;
+      }
+    }
+
+    let releaseFailed = false;
+    let releaseFailure: unknown;
+
+    try {
+      await this.#lease.release();
+    } catch (error) {
+      releaseFailed = true;
+      releaseFailure = error;
+    }
+
+    if (updateFailed) {
+      throw updateFailure;
+    }
+
+    if (releaseFailed) {
+      throw releaseFailure;
+    }
+  }
+
+  #recordOutcome(outcome: RequestPacingOutcome): void {
+    if (outcome === 'rate-limit') {
+      this.#state.successfulRequests = 0;
+      this.#state.intervalMs = Math.min(
+        this.#adaptive.maxIntervalMs,
+        Math.max(
+          this.#baseIntervalMs,
+          Math.ceil(this.#state.intervalMs * this.#adaptive.increaseFactor),
+        ),
+      );
+      return;
+    }
+
+    if (outcome !== 'success') {
+      this.#state.successfulRequests = 0;
+      return;
+    }
+
+    this.#state.successfulRequests += 1;
+
+    if (this.#state.successfulRequests >= this.#adaptive.successThreshold) {
+      this.#state.successfulRequests = 0;
+      this.#state.intervalMs = Math.max(
+        this.#baseIntervalMs,
+        Math.ceil(this.#state.intervalMs * this.#adaptive.recoveryFactor),
+      );
+    }
+  }
+}
+
 export class PersistentCoordinator {
   readonly #store: CoordinatedCacheStore;
   readonly #options: Readonly<ResolvedCacheCoordinationOptions>;
@@ -162,6 +314,10 @@ export class PersistentCoordinator {
     return `${this.#keyPrefix}next-request-at`;
   }
 
+  #adaptivePacingStateKey(): string {
+    return `${this.#keyPrefix}adaptive-pacing-state`;
+  }
+
   public async tryAcquireRequest(requestKey: string): Promise<PersistentLease | undefined> {
     const key = this.#requestLockKey(requestKey);
     const owner = randomUUID();
@@ -177,9 +333,11 @@ export class PersistentCoordinator {
   }
 
   public async acquireRequestPacingLease(
-    minIntervalMs: number,
+    baseIntervalMs: number,
+    requestedIntervalMs: number,
+    adaptivePacing: Readonly<ResolvedAdaptivePacingOptions>,
     signal?: AbortSignal,
-  ): Promise<PersistentLease> {
+  ): Promise<AdaptivePacingLease> {
     const lockKey = this.#requestPacingLockKey();
     const owner = randomUUID();
     let lease: PersistentLease | undefined;
@@ -196,18 +354,39 @@ export class PersistentCoordinator {
 
     try {
       const nextRequestAt = decodeTimestamp(await this.#store.get(this.#nextRequestAtKey())) ?? 0;
+      const storedState = decodeAdaptivePacingState(
+        await this.#store.get(this.#adaptivePacingStateKey()),
+      );
+      const intervalMs = adaptivePacing.enabled
+        ? Math.min(
+            adaptivePacing.maxIntervalMs,
+            Math.max(baseIntervalMs, requestedIntervalMs, storedState?.intervalMs ?? 0),
+          )
+        : requestedIntervalMs;
+      const state: AdaptivePacingState = {
+        intervalMs,
+        successfulRequests: storedState?.successfulRequests ?? 0,
+      };
 
       await wait(nextRequestAt - Date.now(), signal);
       signal?.throwIfAborted();
 
-      const nextStart = Date.now() + minIntervalMs;
+      const nextStart = Date.now() + intervalMs;
       await this.#store.set(
         this.#nextRequestAtKey(),
         encoder.encode(String(nextStart)),
-        Math.max(1, minIntervalMs),
+        Math.max(1, intervalMs),
       );
 
-      return lease;
+      return new AdaptivePacingLease({
+        lease,
+        store: this.#store,
+        stateKey: this.#adaptivePacingStateKey(),
+        nextRequestAtKey: this.#nextRequestAtKey(),
+        baseIntervalMs,
+        adaptive: adaptivePacing,
+        state,
+      });
     } catch (error) {
       await lease.release();
       throw error;

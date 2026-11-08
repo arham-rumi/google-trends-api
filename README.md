@@ -382,6 +382,13 @@ const trends = createClient({
     minIntervalMs: 2_500,
     cooldownMs: 60_000,
     recovery: true,
+    adaptivePacing: {
+      enabled: true,
+      maxIntervalMs: 30_000,
+      increaseFactor: 2,
+      recoveryFactor: 0.75,
+      successThreshold: 4,
+    },
   },
   cache: {
     enabled: true,
@@ -401,7 +408,7 @@ const trends = createClient({
 | `timeoutMs` | `10000`         | Timeout for each HTTP attempt                           |
 | `retries`   | `2`             | Additional attempts for retryable non-429 failures      |
 | `userAgent` | Package default | User agent sent to Google                               |
-| `rateLimit` | See below       | Request spacing, cooldown, and tokenized-flow recovery  |
+| `rateLimit` | See below       | Adaptive spacing, cooldown, and tokenized-flow recovery |
 | `cache`     | See below       | In-memory cache with an optional persistent store       |
 | `fetch`     | Native `fetch`  | Custom fetch-compatible implementation                  |
 
@@ -416,6 +423,36 @@ const trends = createClient({
 | `cooldownMs`       | `60000`                                    | Fallback cooldown when recovery is disabled    |
 | `recovery`         | `true`                                     | Recover tokenized Explore flows after HTTP 429 |
 | `recoveryDelaysMs` | 1, 2, 3, 5, 10, 15, 20, 25, and 30 minutes | Delays before successive recovery attempts     |
+| `adaptivePacing`   | See below                                  | Increase spacing after 429s and recover slowly |
+
+Adaptive pacing is enabled by default. It starts at `minIntervalMs`, doubles the current interval
+after each HTTP 429, caps it at 30 seconds by default, and reduces it by 25% only after four
+consecutive successful HTTP requests. Ordinary failures reset the success streak without reducing
+the interval.
+
+| Adaptive option    | Default                     | Description                                    |
+| ------------------ | --------------------------- | ---------------------------------------------- |
+| `enabled`          | `true`                      | Enable response-aware interval changes         |
+| `maxIntervalMs`    | `max(30000, minIntervalMs)` | Upper bound for the adaptive interval          |
+| `increaseFactor`   | `2`                         | Multiplier applied after each HTTP 429         |
+| `recoveryFactor`   | `0.75`                      | Multiplier applied after a successful window   |
+| `successThreshold` | `4`                         | Consecutive successes required before recovery |
+
+The adaptive interval is local for an in-memory client. With `CoordinatedCacheStore` and shared
+request pacing enabled, the interval and success streak are persisted and updated under the pacing
+lease, so all coordinated processes respond to the same backoff state. That state expires after 24
+hours without traffic.
+
+Disable only the adaptive changes while keeping fixed request spacing and cooldown handling:
+
+```ts
+const trends = createClient({
+  rateLimit: {
+    minIntervalMs: 2_500,
+    adaptivePacing: { enabled: false },
+  },
+});
+```
 
 Automatic recovery applies to tokenized Explore operations. It waits for the relevant endpoint's
 cooldown, resets the cookie session, performs a fresh warm-up, and restarts the complete tokenized
@@ -591,12 +628,15 @@ The metadata is attached out-of-band and does not alter Google's normalized resu
 ```ts
 console.log(trends.cacheSize);
 console.log(trends.cooldownRemainingMs);
+console.log(trends.requestIntervalMs);
 
 await trends.clearCache();
 ```
 
 - `cacheSize` is the number of entries in this client's in-memory L1 cache.
 - `cooldownRemainingMs` is the largest current endpoint cooldown observed by this client.
+- `requestIntervalMs` is the request interval currently observed by this client, including adaptive
+  backoff learned from coordinated peers.
 - `clearCache()` clears L1 and the configured persistent result entries. It does not reset cookies,
   locks, or cooldowns.
 

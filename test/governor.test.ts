@@ -149,6 +149,69 @@ describe('RequestGovernor', () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
+  it('backs off after a 429 and recovers only after the configured success streak', async () => {
+    vi.useFakeTimers();
+
+    try {
+      const governor = new RequestGovernor(
+        resolveRateLimitOptions({
+          minIntervalMs: 10,
+          recoveryDelaysMs: [0],
+          adaptivePacing: {
+            maxIntervalMs: 15,
+            increaseFactor: 2,
+            recoveryFactor: 0.5,
+            successThreshold: 2,
+          },
+        }),
+      );
+      const rateLimited = governor.execute(async () => {
+        throw new RateLimitError({
+          url: 'https://example.test/data',
+          responseBody: undefined,
+          retryAfterMs: undefined,
+        });
+      });
+
+      await expect(rateLimited).rejects.toBeInstanceOf(RateLimitError);
+      expect(governor.requestIntervalMs).toBe(15);
+
+      const firstSuccess = governor.execute(async () => 'first');
+      await vi.advanceTimersByTimeAsync(15);
+      await expect(firstSuccess).resolves.toBe('first');
+      expect(governor.requestIntervalMs).toBe(15);
+
+      const secondSuccess = governor.execute(async () => 'second');
+      await vi.advanceTimersByTimeAsync(15);
+      await expect(secondSuccess).resolves.toBe('second');
+      expect(governor.requestIntervalMs).toBe(10);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a fixed interval when adaptive pacing is disabled', async () => {
+    const governor = new RequestGovernor(
+      resolveRateLimitOptions({
+        minIntervalMs: 10,
+        recoveryDelaysMs: [0],
+        adaptivePacing: { enabled: false },
+      }),
+    );
+
+    await expect(
+      governor.execute(async () => {
+        throw new RateLimitError({
+          url: 'https://example.test/data',
+          responseBody: undefined,
+          retryAfterMs: undefined,
+        });
+      }),
+    ).rejects.toBeInstanceOf(RateLimitError);
+    expect(governor.requestIntervalMs).toBe(10);
+  });
+
   it('rejects invalid recovery delays', () => {
     expect(() =>
       resolveRateLimitOptions({

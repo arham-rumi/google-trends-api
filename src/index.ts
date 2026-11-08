@@ -68,6 +68,7 @@ export type {
 } from './google/related-searches.js';
 
 export type {
+  AdaptivePacingOptions,
   CacheCoordinationOptions,
   CacheOptions,
   CacheStore,
@@ -80,6 +81,7 @@ export type {
   QueryPrimitive,
   QueryValue,
   RateLimitOptions,
+  ResolvedAdaptivePacingOptions,
   ResolvedCacheCoordinationOptions,
   ResolvedCacheOptions,
   ResolvedGoogleTrendsClientOptions,

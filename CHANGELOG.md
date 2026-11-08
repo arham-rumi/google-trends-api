@@ -22,6 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   another from making an avoidable request and can unlock shared stale-cache fallback.
 - Added shared HTTP request serialization and minimum start spacing across coordinated clients,
   including the multiple underlying requests made by tokenized Explore operations.
+- Added bounded adaptive pacing that increases the request interval after HTTP 429 responses and
+  recovers gradually after a configurable consecutive-success window.
+- Persisted adaptive interval and recovery progress for coordinated clients, with
+  `requestIntervalMs` exposed for runtime observability.
 
 ### Changed
 
@@ -36,6 +40,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added deterministic lease, shared-cooldown, concurrent-client, and coordinated stale-fallback
   coverage.
 - Added cross-client coverage proving unrelated request keys obey the shared pacing interval.
+- Added deterministic local and cross-client adaptive backoff, recovery, validation, and
+  observability coverage.
 
 ## 0.2.4 - 2026-08-08
 

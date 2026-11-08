@@ -259,6 +259,11 @@ export class GoogleTrendsClient {
     );
   }
 
+  /** Current locally observed request interval, including adaptive backoff. */
+  public get requestIntervalMs(): number {
+    return this.#session.requestIntervalMs;
+  }
+
   public clearCache(): Promise<void> {
     return this.#cache.clear();
   }

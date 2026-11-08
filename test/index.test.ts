@@ -19,6 +19,13 @@ describe('createClient', () => {
       rateLimit: {
         enabled: true,
         minIntervalMs: 2_500,
+        adaptivePacing: {
+          enabled: true,
+          maxIntervalMs: 30_000,
+          increaseFactor: 2,
+          recoveryFactor: 0.75,
+          successThreshold: 4,
+        },
         cooldownMs: 60_000,
         recovery: true,
         recoveryDelaysMs: [
@@ -42,6 +49,7 @@ describe('createClient', () => {
 
     expect(client.options.userAgent).toContain('Mozilla/5.0');
     expect(client.options.userAgent).toContain('Chrome/');
+    expect(client.requestIntervalMs).toBe(2_500);
   });
 
   it('rejects invalid options', () => {
@@ -50,6 +58,20 @@ describe('createClient', () => {
     expect(() => createClient({ locale: '' })).toThrow(RangeError);
     expect(() => createClient({ rateLimit: { minIntervalMs: -1 } })).toThrow(RangeError);
     expect(() => createClient({ rateLimit: { recoveryDelaysMs: [-1] } })).toThrow(RangeError);
+    expect(() =>
+      createClient({
+        rateLimit: { minIntervalMs: 100, adaptivePacing: { maxIntervalMs: 99 } },
+      }),
+    ).toThrow(RangeError);
+    expect(() => createClient({ rateLimit: { adaptivePacing: { increaseFactor: 1 } } })).toThrow(
+      RangeError,
+    );
+    expect(() => createClient({ rateLimit: { adaptivePacing: { recoveryFactor: 1 } } })).toThrow(
+      RangeError,
+    );
+    expect(() => createClient({ rateLimit: { adaptivePacing: { successThreshold: 0 } } })).toThrow(
+      RangeError,
+    );
     expect(() => createClient({ cache: { maxEntries: 0 } })).toThrow(RangeError);
     expect(() => createClient({ cache: { keyPrefix: '' } })).toThrow(RangeError);
     expect(() => createClient({ cache: { coordination: { enabled: true } } })).toThrow(TypeError);

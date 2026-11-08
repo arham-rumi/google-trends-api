@@ -21,12 +21,40 @@ export interface RetryOptions {
   jitter: number;
 }
 
+export interface AdaptivePacingOptions {
+  /** Enables response-aware request spacing. Defaults to true. */
+  enabled?: boolean;
+
+  /** Maximum adaptive request interval. Defaults to at least 30 seconds. */
+  maxIntervalMs?: number;
+
+  /** Multiplier applied after each HTTP 429. Defaults to 2. */
+  increaseFactor?: number;
+
+  /** Multiplier applied after a successful recovery window. Defaults to 0.75. */
+  recoveryFactor?: number;
+
+  /** Successful requests required before reducing the interval. Defaults to 4. */
+  successThreshold?: number;
+}
+
+export interface ResolvedAdaptivePacingOptions {
+  enabled: boolean;
+  maxIntervalMs: number;
+  increaseFactor: number;
+  recoveryFactor: number;
+  successThreshold: number;
+}
+
 export interface RateLimitOptions {
   /** Enables serialized, spaced requests and shared cooldown handling. Defaults to true. */
   enabled?: boolean;
 
   /** Minimum delay between the start of Google requests. Defaults to 2500 ms. */
   minIntervalMs?: number;
+
+  /** Response-aware pacing that backs off after 429s and recovers gradually. */
+  adaptivePacing?: AdaptivePacingOptions;
 
   /** Fallback cooldown when automatic recovery is disabled. Defaults to 60 seconds. */
   cooldownMs?: number;
@@ -47,6 +75,7 @@ export interface RateLimitOptions {
 export interface ResolvedRateLimitOptions {
   enabled: boolean;
   minIntervalMs: number;
+  adaptivePacing: Readonly<ResolvedAdaptivePacingOptions>;
   cooldownMs: number;
   recovery: boolean;
   recoveryDelaysMs: readonly number[];

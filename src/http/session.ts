@@ -78,6 +78,10 @@ export class HttpSession {
     return this.#context.governor.cooldownRemainingMs;
   }
 
+  public get requestIntervalMs(): number {
+    return this.#context.governor.requestIntervalMs;
+  }
+
   public getCooldownRemainingMs(path: string | URL): number {
     return this.#context.governor.getCooldownRemainingMs(this.#resolveRateLimitKey(path));
   }
