@@ -64,6 +64,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   namespace scans, bounded deletion, and invalid responses.
 - Added deterministic bulk-workload coverage for concurrency bounds, ordering, failures,
   deduplication, progress, cancellation, immutability, and callback isolation.
+- Added a real Redis 7.4 CI suite covering TTL expiry, atomic cross-connection leases, escaped
+  namespace clearing, and end-to-end request coalescing between clients.
 
 ## 0.2.4 - 2026-08-08
 

@@ -720,6 +720,10 @@ your application's shutdown path. `clear()` scans the endpoint reached by `sendC
 Cluster deployments that need namespace clearing across every primary should provide a
 cluster-aware command executor or a custom `CoordinatedCacheStore`.
 
+The repository also runs a real Redis integration suite in CI. It verifies binary TTL expiry,
+atomic lease ownership across connections, escaped namespace clearing, and cross-client request
+coalescing against Redis 7.4.
+
 Tune or disable it with:
 
 ```ts
@@ -1054,6 +1058,13 @@ Useful deterministic commands:
 | `npm run package:check` | Build and validate package/types                  |
 | `npm run test:package`  | Test packed ESM and CommonJS consumers            |
 | `npm run release:check` | Run the complete pre-release gate and npm dry run |
+
+Run the real Redis suite separately when a Redis server is available. It uses
+`redis://127.0.0.1:6379` by default or `REDIS_URL` when configured:
+
+```bash
+npm run test:redis
+```
 
 Build and run the basic example:
 
