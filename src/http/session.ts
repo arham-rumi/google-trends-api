@@ -2,6 +2,7 @@ import fetchCookieExport from 'fetch-cookie';
 
 import { HttpStatusError, InvalidResponseError } from '../errors.js';
 import { GOOGLE_EXPLORE_PAGE_PATH, GOOGLE_TRENDS_HOME_PATH } from '../google/constants.js';
+import type { MetricsCollector } from '../observability.js';
 import {
   RequestGovernor,
   resolveRateLimitOptions,
@@ -44,7 +45,11 @@ export class HttpSession {
   readonly #baseFetch: FetchLike;
   readonly #context: RequestContext;
 
-  public constructor(options: HttpSessionOptions, sharedRequestPacer?: SharedRequestPacer) {
+  public constructor(
+    options: HttpSessionOptions,
+    sharedRequestPacer?: SharedRequestPacer,
+    metrics?: MetricsCollector,
+  ) {
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -58,7 +63,11 @@ export class HttpSession {
       defaultHeaders: new Headers(options.headers),
       timeoutMs,
       retry: resolveRetryOptions(options.retry),
-      governor: new RequestGovernor(resolveRateLimitOptions(options.rateLimit), sharedRequestPacer),
+      governor: new RequestGovernor(
+        resolveRateLimitOptions(options.rateLimit),
+        sharedRequestPacer,
+        metrics,
+      ),
     };
   }
 

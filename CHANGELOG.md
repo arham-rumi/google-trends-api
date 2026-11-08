@@ -31,6 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   healthy endpoints, and share state across coordinated clients.
 - Added typed `RequestBudgetExceededError` reasons for queue saturation, queue timeout, and open
   circuits, plus pending-request and circuit observability getters.
+- Added typed, vendor-neutral lifecycle events for operation sources, in-flight joins, HTTP timing,
+  adaptive pacing, budget rejection, and circuit transitions.
+- Added immutable `getMetrics()` snapshots with cumulative counters and live gauges, plus
+  `resetMetrics()` and listener-error isolation.
 
 ### Changed
 
@@ -49,6 +53,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   observability coverage.
 - Added deterministic queue-capacity, queue-timeout, endpoint isolation, shared-circuit, and stale
   circuit-fallback coverage.
+- Added deterministic event, metric, reset, immutability, in-flight, and listener-isolation
+  coverage.
 
 ## 0.2.4 - 2026-08-08
 

@@ -42,6 +42,7 @@ import {
   type TrendingNowResult,
 } from './google/trending-now.js';
 import { HttpSession, type HttpSessionWarmupOptions } from './http/session.js';
+import { MetricsCollector, type GoogleTrendsMetrics } from './observability.js';
 import { resolveRateLimitOptions } from './rate-limit/governor.js';
 import {
   isCoordinatedCacheStore,
@@ -163,6 +164,11 @@ function resolveOptions(options: GoogleTrendsClientOptions): ResolvedGoogleTrend
     userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
     rateLimit: Object.freeze(resolveRateLimitOptions(options.rateLimit)),
     cache: Object.freeze(resolveCacheOptions(options.cache)),
+    observability: Object.freeze({
+      ...(options.observability?.onEvent === undefined
+        ? {}
+        : { onEvent: options.observability.onEvent }),
+    }),
   };
 
   if (resolved.locale.trim().length === 0) {
@@ -217,11 +223,13 @@ export class GoogleTrendsClient {
   readonly #session: HttpSession;
   readonly #cache: ResultCache;
   readonly #coordinator: PersistentCoordinator | undefined;
+  readonly #metrics: MetricsCollector;
   readonly #inflight = new Map<string, InflightEntry<object>>();
   #warmupPromise: Promise<void> | undefined;
 
   public constructor(options: GoogleTrendsClientOptions = {}) {
     this.options = Object.freeze(resolveOptions(options));
+    this.#metrics = new MetricsCollector(this.options.observability.onEvent);
     this.#cache = new ResultCache(this.options.cache);
     this.#coordinator =
       this.options.cache.coordination.enabled && isCoordinatedCacheStore(this.options.cache.store)
@@ -250,6 +258,7 @@ export class GoogleTrendsClient {
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       },
       this.options.cache.coordination.sharedRequestPacing ? this.#coordinator : undefined,
+      this.#metrics,
     );
   }
 
@@ -277,6 +286,22 @@ export class GoogleTrendsClient {
   /** Remaining local circuit-open duration observed by this client. */
   public get circuitRemainingMs(): number {
     return this.#session.circuitRemainingMs;
+  }
+
+  /** Returns an immutable counter and live-gauge snapshot for this client. */
+  public getMetrics(): Readonly<GoogleTrendsMetrics> {
+    return this.#metrics.snapshot({
+      cacheSize: this.cacheSize,
+      pendingRequests: this.pendingRequests,
+      requestIntervalMs: this.requestIntervalMs,
+      cooldownRemainingMs: this.cooldownRemainingMs,
+      circuitRemainingMs: this.circuitRemainingMs,
+    });
+  }
+
+  /** Resets cumulative counters. Live gauges are unaffected. */
+  public resetMetrics(): void {
+    this.#metrics.reset();
   }
 
   public clearCache(): Promise<void> {
@@ -418,12 +443,21 @@ export class GoogleTrendsClient {
     });
   }
 
-  #cacheOutcome<T extends object>(lookup: CacheLookup<T>): OperationOutcome<T> {
-    return {
+  #cacheOutcome<T extends object>(lookup: CacheLookup<T>, operation: string): OperationOutcome<T> {
+    const outcome: OperationOutcome<T> = {
       value: lookup.value,
       source: lookup.state === 'fresh' ? 'cache' : 'stale-cache',
       cachedAt: lookup.cachedAt,
     };
+
+    this.#metrics.emit({
+      type: 'operation-result',
+      timestamp: Date.now(),
+      operation,
+      source: outcome.source,
+      cachedAt: lookup.cachedAt,
+    });
+    return outcome;
   }
 
   async #publishRateLimit(error: RateLimitError, signal?: AbortSignal): Promise<void> {
@@ -468,11 +502,11 @@ export class GoogleTrendsClient {
     signal.throwIfAborted();
 
     if (cached?.state === 'fresh') {
-      return this.#cacheOutcome(cached);
+      return this.#cacheOutcome(cached, options.method);
     }
 
     if (cached?.state === 'stale' && (await this.#hasRelevantCooldown(options.rateLimitPaths))) {
-      return this.#cacheOutcome(cached);
+      return this.#cacheOutcome(cached, options.method);
     }
 
     try {
@@ -488,14 +522,14 @@ export class GoogleTrendsClient {
             signal.throwIfAborted();
 
             if (cached?.state === 'fresh') {
-              return this.#cacheOutcome(cached);
+              return this.#cacheOutcome(cached, options.method);
             }
 
             if (
               cached?.state === 'stale' &&
               (await this.#hasRelevantCooldown(options.rateLimitPaths))
             ) {
-              return this.#cacheOutcome(cached);
+              return this.#cacheOutcome(cached, options.method);
             }
           }
         }
@@ -504,14 +538,14 @@ export class GoogleTrendsClient {
         signal.throwIfAborted();
 
         if (cached?.state === 'fresh') {
-          return this.#cacheOutcome(cached);
+          return this.#cacheOutcome(cached, options.method);
         }
 
         if (
           cached?.state === 'stale' &&
           (await this.#hasRelevantCooldown(options.rateLimitPaths))
         ) {
-          return this.#cacheOutcome(cached);
+          return this.#cacheOutcome(cached, options.method);
         }
       }
 
@@ -520,6 +554,12 @@ export class GoogleTrendsClient {
         : await options.operation(signal);
 
       await this.#cache.set(key, value);
+      this.#metrics.emit({
+        type: 'operation-result',
+        timestamp: Date.now(),
+        operation: options.method,
+        source: 'network',
+      });
       return {
         value,
         source: 'network',
@@ -529,12 +569,12 @@ export class GoogleTrendsClient {
         await this.#publishRateLimit(error, signal);
 
         if (cached?.state === 'stale') {
-          return this.#cacheOutcome(cached);
+          return this.#cacheOutcome(cached, options.method);
         }
       }
 
       if (error instanceof RequestBudgetExceededError && cached?.state === 'stale') {
-        return this.#cacheOutcome(cached);
+        return this.#cacheOutcome(cached, options.method);
       }
 
       throw error;
@@ -562,6 +602,11 @@ export class GoogleTrendsClient {
     const existing = this.#inflight.get(key) as InflightEntry<T> | undefined;
 
     if (existing !== undefined) {
+      this.#metrics.emit({
+        type: 'inflight-joined',
+        timestamp: Date.now(),
+        operation: options.method,
+      });
       return this.#joinInflight(existing, signal);
     }
 

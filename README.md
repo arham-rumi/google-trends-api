@@ -22,6 +22,7 @@ trends, and Google Trends autocomplete suggestions without driving a browser.
 - [API guide](#api-guide)
 - [Client configuration](#client-configuration)
 - [Caching, deduplication, and rate limits](#caching-deduplication-and-rate-limits)
+- [Observability](#observability)
 - [Cancellation](#cancellation)
 - [Error handling](#error-handling)
 - [CommonJS](#commonjs)
@@ -94,6 +95,8 @@ time range.
 | `autocomplete()`      | Search-term suggestions and topic machine IDs       | Terms and topics                   |
 | `warmup()`            | Explicitly establish the cookie-aware session       | `Promise<void>`                    |
 | `clearCache()`        | Remove results from the memory and persistent cache | `Promise<void>`                    |
+| `getMetrics()`        | Snapshot counters and live request/cache gauges     | Immutable metrics object           |
+| `resetMetrics()`      | Reset cumulative counters                           | `void`                             |
 | `getResultMetadata()` | Identify network, fresh-cache, or stale-cache data  | Source, stale flag, and cache time |
 
 All public request methods support `AbortSignal`. Explore-based methods accept either the concise
@@ -408,16 +411,17 @@ const trends = createClient({
 
 ### Top-level options
 
-| Option      | Default         | Description                                             |
-| ----------- | --------------- | ------------------------------------------------------- |
-| `locale`    | `'en-US'`       | Locale sent to Google Trends                            |
-| `timezone`  | `0`             | Google Trends timezone offset in minutes (`-840`–`840`) |
-| `timeoutMs` | `10000`         | Timeout for each HTTP attempt                           |
-| `retries`   | `2`             | Additional attempts for retryable non-429 failures      |
-| `userAgent` | Package default | User agent sent to Google                               |
-| `rateLimit` | See below       | Adaptive spacing, cooldown, and tokenized-flow recovery |
-| `cache`     | See below       | In-memory cache with an optional persistent store       |
-| `fetch`     | Native `fetch`  | Custom fetch-compatible implementation                  |
+| Option          | Default         | Description                                             |
+| --------------- | --------------- | ------------------------------------------------------- |
+| `locale`        | `'en-US'`       | Locale sent to Google Trends                            |
+| `timezone`      | `0`             | Google Trends timezone offset in minutes (`-840`–`840`) |
+| `timeoutMs`     | `10000`         | Timeout for each HTTP attempt                           |
+| `retries`       | `2`             | Additional attempts for retryable non-429 failures      |
+| `userAgent`     | Package default | User agent sent to Google                               |
+| `rateLimit`     | See below       | Adaptive spacing, cooldown, and tokenized-flow recovery |
+| `cache`         | See below       | In-memory cache with an optional persistent store       |
+| `observability` | `undefined`     | Optional typed event listener for telemetry             |
+| `fetch`         | Native `fetch`  | Custom fetch-compatible implementation                  |
 
 `client.options` exposes the resolved, read-only configuration.
 
@@ -676,6 +680,68 @@ Without a `store`, the cache is local to one client instance. A regular persiste
 completed results. A `CoordinatedCacheStore` also coalesces identical misses and shares observed
 cooldowns and request pacing, but it does not bypass Google's rate limits. Returned results are
 cloned, so changing one result does not mutate the cached value returned to another caller.
+
+## Observability
+
+Use the optional typed event listener to connect the client to logs, OpenTelemetry, Prometheus, or
+another metrics system without adding a telemetry dependency to this package:
+
+```ts
+import { createClient, type GoogleTrendsEvent } from '@arham-rumi/google-trends-api';
+
+function recordEvent(event: GoogleTrendsEvent): void {
+  if (event.type === 'budget-rejected') {
+    console.warn('Google Trends request protected', {
+      endpoint: event.endpoint,
+      reason: event.reason,
+      retryAfterMs: event.retryAfterMs,
+    });
+  }
+
+  telemetry.record(event);
+}
+
+const trends = createClient({
+  observability: {
+    onEvent: recordEvent,
+  },
+});
+```
+
+Events are timestamped with Unix milliseconds and cover:
+
+- Network, fresh-cache, and stale-cache operation results.
+- Identical callers joining an in-flight operation.
+- HTTP request starts, durations, successes, failures, and 429s.
+- Adaptive pacing increases, recoveries, and shared-state changes.
+- Queue and circuit rejections.
+- Circuit open and close transitions observed by this client.
+
+The listener runs synchronously so event ordering is deterministic. Listener exceptions are caught
+and counted in `listenerErrors`; they never change the request result. Keep the listener lightweight
+and hand expensive exporting work to your own non-blocking queue.
+
+`getMetrics()` returns an immutable per-client snapshot:
+
+```ts
+const metrics = trends.getMetrics();
+
+console.log({
+  networkResults: metrics.networkResults,
+  cacheHits: metrics.cacheHits,
+  staleCacheHits: metrics.staleCacheHits,
+  rateLimits: metrics.rateLimits,
+  budgetRejections: metrics.budgetRejections,
+  pendingRequests: metrics.pendingRequests,
+  requestIntervalMs: metrics.requestIntervalMs,
+});
+
+trends.resetMetrics();
+```
+
+Counters are cumulative until `resetMetrics()` is called. Live gauges—cache size, pending requests,
+current request interval, cooldown, and circuit duration—are sampled when `getMetrics()` runs and
+are not reset.
 
 ## Cancellation
 

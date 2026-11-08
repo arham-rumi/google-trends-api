@@ -1,4 +1,5 @@
 import type { CacheOptions, ResolvedCacheOptions } from './cache/types.js';
+import type { ObservabilityOptions } from './observability.js';
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -140,6 +141,7 @@ export interface GoogleTrendsClientOptions {
   userAgent?: string;
   rateLimit?: RateLimitOptions;
   cache?: CacheOptions;
+  observability?: ObservabilityOptions;
 
   /** Custom fetch implementation, primarily for testing or advanced networking. */
   fetch?: FetchLike;
@@ -153,7 +155,15 @@ export interface ResolvedGoogleTrendsClientOptions {
   userAgent: string;
   rateLimit: Readonly<ResolvedRateLimitOptions>;
   cache: Readonly<ResolvedCacheOptions>;
+  observability: Readonly<ObservabilityOptions>;
 }
+
+export type {
+  GoogleTrendsEvent,
+  GoogleTrendsEventListener,
+  GoogleTrendsMetrics,
+  ObservabilityOptions,
+} from './observability.js';
 
 export type {
   CacheCoordinationOptions,

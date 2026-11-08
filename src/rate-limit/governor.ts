@@ -1,4 +1,5 @@
 import { RateLimitError, RequestBudgetExceededError } from '../errors.js';
+import type { MetricsCollector } from '../observability.js';
 import type {
   RateLimitOptions,
   ResolvedAdaptivePacingOptions,
@@ -168,16 +169,23 @@ export function resolveRateLimitOptions(options: RateLimitOptions = {}): Resolve
 export class RequestGovernor {
   readonly #options: Readonly<ResolvedRateLimitOptions>;
   readonly #sharedPacer: SharedRequestPacer | undefined;
+  readonly #metrics: MetricsCollector | undefined;
   readonly #endpointStates = new Map<string, EndpointRateLimitState>();
   #tail: Promise<void> = Promise.resolve();
   #nextStartAt = 0;
   #requestIntervalMs: number;
   #successfulRequests = 0;
   #pendingRequests = 0;
+  readonly #emittedBudgetErrors = new WeakSet<RequestBudgetExceededError>();
 
-  public constructor(options: ResolvedRateLimitOptions, sharedPacer?: SharedRequestPacer) {
+  public constructor(
+    options: ResolvedRateLimitOptions,
+    sharedPacer?: SharedRequestPacer,
+    metrics?: MetricsCollector,
+  ) {
     this.#options = options;
     this.#sharedPacer = sharedPacer;
+    this.#metrics = metrics;
     this.#requestIntervalMs = options.minIntervalMs;
   }
 
@@ -246,18 +254,19 @@ export class RequestGovernor {
       const circuitError = this.#getCircuitError(state);
 
       if (circuitError !== undefined) {
+        this.#emitBudgetRejection(circuitError, resolvedKey);
         return Promise.reject(circuitError);
       }
 
       if (this.#pendingRequests >= budget.maxPendingRequests) {
-        return Promise.reject(
-          new RequestBudgetExceededError({
-            reason: 'queue-full',
-            pendingRequests: this.#pendingRequests,
-            maxPendingRequests: budget.maxPendingRequests,
-            retryAfterMs: this.#requestIntervalMs,
-          }),
-        );
+        const error = new RequestBudgetExceededError({
+          reason: 'queue-full',
+          pendingRequests: this.#pendingRequests,
+          maxPendingRequests: budget.maxPendingRequests,
+          retryAfterMs: this.#requestIntervalMs,
+        });
+        this.#emitBudgetRejection(error, resolvedKey);
+        return Promise.reject(error);
       }
     }
 
@@ -283,6 +292,7 @@ export class RequestGovernor {
         });
 
         admissionController.abort(error);
+        this.#emitBudgetRejection(error, resolvedKey);
         rejectTimeout?.(error);
       }, budget.maxQueueWaitMs);
       timeout.unref?.();
@@ -301,6 +311,7 @@ export class RequestGovernor {
       let operationStarted = false;
       let value: T | undefined;
       let pacingOutcome: RequestPacingOutcome = 'error';
+      let operationStartedAt = 0;
 
       try {
         admissionSignal.throwIfAborted();
@@ -324,17 +335,41 @@ export class RequestGovernor {
           resolvedKey,
           admissionSignal,
         );
+        const intervalBeforeSharedState = this.#requestIntervalMs;
         this.#requestIntervalMs = Math.max(this.#requestIntervalMs, sharedLease?.intervalMs ?? 0);
+        if (this.#requestIntervalMs !== intervalBeforeSharedState) {
+          this.#emitPacingChanged(intervalBeforeSharedState, 'shared-state');
+        }
         admissionSignal.throwIfAborted();
         clearAdmissionTimeout();
         this.#nextStartAt = Date.now() + this.#requestIntervalMs;
         operationStarted = true;
+        operationStartedAt = Date.now();
+        this.#metrics?.emit({
+          type: 'http-request-start',
+          timestamp: operationStartedAt,
+          endpoint: resolvedKey,
+          pendingRequests: this.#pendingRequests,
+          intervalMs: this.#requestIntervalMs,
+        });
         value = await operation();
         pacingOutcome = 'success';
+        const circuitWasKnown = state.circuitOpenUntil > 0;
         this.#endpointStates.delete(resolvedKey);
+        if (circuitWasKnown) {
+          this.#metrics?.emit({
+            type: 'circuit-closed',
+            timestamp: Date.now(),
+            endpoint: resolvedKey,
+          });
+        }
       } catch (error) {
         failed = true;
         failure = error;
+
+        if (error instanceof RequestBudgetExceededError) {
+          this.#emitBudgetRejection(error, resolvedKey);
+        }
 
         if (operationStarted && error instanceof RateLimitError) {
           pacingOutcome = 'rate-limit';
@@ -351,11 +386,20 @@ export class RequestGovernor {
 
           state.consecutiveRateLimits += 1;
           state.cooldownUntil = Math.max(state.cooldownUntil, Date.now() + cooldownMs);
+          const circuitWasOpen = state.circuitOpenUntil > Date.now();
           if (budget.enabled && state.consecutiveRateLimits >= budget.circuitBreakerThreshold) {
             state.circuitOpenUntil = Math.max(
               state.circuitOpenUntil,
               Date.now() + budget.circuitOpenMs,
             );
+            if (!circuitWasOpen) {
+              this.#metrics?.emit({
+                type: 'circuit-opened',
+                timestamp: Date.now(),
+                endpoint: resolvedKey,
+                openMs: budget.circuitOpenMs,
+              });
+            }
           }
           this.#endpointStates.set(resolvedKey, state);
         }
@@ -366,7 +410,21 @@ export class RequestGovernor {
       }
 
       if (operationStarted) {
+        this.#metrics?.emit({
+          type: 'http-request-complete',
+          timestamp: Date.now(),
+          endpoint: resolvedKey,
+          outcome: pacingOutcome,
+          durationMs: Math.max(0, Date.now() - operationStartedAt),
+        });
+        const previousIntervalMs = this.#requestIntervalMs;
         this.#recordPacingOutcome(pacingOutcome);
+        if (this.#requestIntervalMs !== previousIntervalMs) {
+          this.#emitPacingChanged(
+            previousIntervalMs,
+            pacingOutcome === 'rate-limit' ? 'rate-limit' : 'recovery',
+          );
+        }
       }
 
       let releaseFailed = false;
@@ -418,6 +476,34 @@ export class RequestGovernor {
     return retryAfterMs > 0
       ? new RequestBudgetExceededError({ reason: 'circuit-open', retryAfterMs })
       : undefined;
+  }
+
+  #emitBudgetRejection(error: RequestBudgetExceededError, endpoint: string): void {
+    if (this.#emittedBudgetErrors.has(error)) {
+      return;
+    }
+
+    this.#emittedBudgetErrors.add(error);
+    this.#metrics?.emit({
+      type: 'budget-rejected',
+      timestamp: Date.now(),
+      endpoint,
+      reason: error.reason,
+      ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
+    });
+  }
+
+  #emitPacingChanged(
+    previousIntervalMs: number,
+    reason: 'rate-limit' | 'recovery' | 'shared-state',
+  ): void {
+    this.#metrics?.emit({
+      type: 'pacing-changed',
+      timestamp: Date.now(),
+      previousIntervalMs,
+      intervalMs: this.#requestIntervalMs,
+      reason,
+    });
   }
 
   #recordPacingOutcome(outcome: RequestPacingOutcome): void {

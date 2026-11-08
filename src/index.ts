@@ -77,6 +77,9 @@ export type {
   CoordinatedCacheStore,
   FetchLike,
   GoogleTrendsClientOptions,
+  GoogleTrendsEvent,
+  GoogleTrendsEventListener,
+  GoogleTrendsMetrics,
   HttpHeadersInit,
   QueryParameters,
   QueryPrimitive,
@@ -90,4 +93,5 @@ export type {
   ResolvedRateLimitOptions,
   ResolvedRequestBudgetOptions,
   RetryOptions,
+  ObservabilityOptions,
 } from './types.js';
