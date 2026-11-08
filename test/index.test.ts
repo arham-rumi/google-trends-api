@@ -33,6 +33,7 @@ describe('createClient', () => {
         keyPrefix: 'google-trends-api:v1:',
         coordination: {
           enabled: false,
+          sharedRequestPacing: true,
           lockTtlMs: 30_000,
           pollIntervalMs: 100,
         },
@@ -67,8 +68,23 @@ describe('createClient', () => {
 
     expect(client.options.cache.coordination).toEqual({
       enabled: true,
+      sharedRequestPacing: true,
       lockTtlMs: 30_000,
       pollIntervalMs: 100,
+    });
+  });
+
+  it('allows shared request pacing to be disabled independently', () => {
+    const client = createClient({
+      cache: {
+        store: new TestCoordinatedCacheStore(),
+        coordination: { sharedRequestPacing: false },
+      },
+    });
+
+    expect(client.options.cache.coordination).toMatchObject({
+      enabled: true,
+      sharedRequestPacing: false,
     });
   });
 });

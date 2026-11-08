@@ -9,6 +9,7 @@ function createCoordinator(
 ): PersistentCoordinator {
   return new PersistentCoordinator(store, 'test:', {
     enabled: true,
+    sharedRequestPacing: true,
     lockTtlMs: options.lockTtlMs ?? 30,
     pollIntervalMs: options.pollIntervalMs ?? 5,
   });
@@ -95,6 +96,40 @@ describe('PersistentCoordinator', () => {
 
       await vi.advanceTimersByTimeAsync(1_000);
       await expect(first.getCooldownRemainingMs('/trends/api/explore')).resolves.toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('serializes and spaces shared HTTP request starts', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-08T00:00:00.000Z'));
+
+    try {
+      const store = new TestCoordinatedCacheStore();
+      const first = createCoordinator(store, { lockTtlMs: 100, pollIntervalMs: 5 });
+      const second = createCoordinator(store, { lockTtlMs: 100, pollIntervalMs: 5 });
+      const firstLease = await first.acquireRequestPacingLease(20);
+      let secondLease: Awaited<ReturnType<typeof second.acquireRequestPacingLease>> | undefined;
+      const secondLeasePromise = second.acquireRequestPacingLease(20).then((lease) => {
+        secondLease = lease;
+        return lease;
+      });
+
+      await vi.advanceTimersByTimeAsync(5);
+      expect(secondLease).toBeUndefined();
+
+      await firstLease.release();
+      await vi.advanceTimersByTimeAsync(14);
+      expect(secondLease).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await secondLeasePromise;
+      expect(secondLease).toBeDefined();
+
+      await secondLease?.release();
+      expect(store.locks.size).toBe(0);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();

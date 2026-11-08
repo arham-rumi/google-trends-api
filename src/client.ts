@@ -82,6 +82,7 @@ function resolveCacheOptions(
   const coordination = {
     enabled:
       options.coordination?.enabled ?? (cacheEnabled && isCoordinatedCacheStore(options.store)),
+    sharedRequestPacing: options.coordination?.sharedRequestPacing ?? true,
     lockTtlMs: options.coordination?.lockTtlMs ?? 30_000,
     pollIntervalMs: options.coordination?.pollIntervalMs ?? 100,
   };
@@ -225,23 +226,26 @@ export class GoogleTrendsClient {
             this.options.cache.coordination,
           )
         : undefined;
-    this.#session = new HttpSession({
-      baseUrl: GOOGLE_TRENDS_BASE_URL,
-      timeoutMs: this.options.timeoutMs,
-      retry: {
-        retries: this.options.retries,
+    this.#session = new HttpSession(
+      {
+        baseUrl: GOOGLE_TRENDS_BASE_URL,
+        timeoutMs: this.options.timeoutMs,
+        retry: {
+          retries: this.options.retries,
+        },
+        rateLimit: this.options.rateLimit,
+        headers: {
+          accept: 'application/json,text/plain,*/*',
+          'accept-language': `${this.options.locale},en;q=0.9`,
+          'cache-control': 'no-cache',
+          pragma: 'no-cache',
+          referer: `${GOOGLE_TRENDS_BASE_URL}/explore`,
+          'user-agent': this.options.userAgent,
+        },
+        ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       },
-      rateLimit: this.options.rateLimit,
-      headers: {
-        accept: 'application/json,text/plain,*/*',
-        'accept-language': `${this.options.locale},en;q=0.9`,
-        'cache-control': 'no-cache',
-        pragma: 'no-cache',
-        referer: `${GOOGLE_TRENDS_BASE_URL}/explore`,
-        'user-agent': this.options.userAgent,
-      },
-      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-    });
+      this.options.cache.coordination.sharedRequestPacing ? this.#coordinator : undefined,
+    );
   }
 
   public get cacheSize(): number {

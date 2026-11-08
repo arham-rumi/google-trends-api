@@ -26,8 +26,11 @@ export interface CoordinatedCacheStore extends CacheStore {
 }
 
 export interface CacheCoordinationOptions {
-  /** Enables cross-instance request coalescing and shared cooldowns. */
+  /** Enables cross-instance request coalescing, cooldowns, and optional shared pacing. */
   enabled?: boolean;
+
+  /** Serializes and spaces HTTP requests across coordinated clients. Defaults to true. */
+  sharedRequestPacing?: boolean;
 
   /** Lease duration for distributed request locks. Defaults to 30 seconds. */
   lockTtlMs?: number;
@@ -38,6 +41,7 @@ export interface CacheCoordinationOptions {
 
 export interface ResolvedCacheCoordinationOptions {
   enabled: boolean;
+  sharedRequestPacing: boolean;
   lockTtlMs: number;
   pollIntervalMs: number;
 }

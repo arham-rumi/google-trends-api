@@ -154,6 +154,14 @@ export class PersistentCoordinator {
     return `${this.#keyPrefix}cooldown-lock:${digest(path)}`;
   }
 
+  #requestPacingLockKey(): string {
+    return `${this.#keyPrefix}request-pacing-lock`;
+  }
+
+  #nextRequestAtKey(): string {
+    return `${this.#keyPrefix}next-request-at`;
+  }
+
   public async tryAcquireRequest(requestKey: string): Promise<PersistentLease | undefined> {
     const key = this.#requestLockKey(requestKey);
     const owner = randomUUID();
@@ -166,6 +174,44 @@ export class PersistentCoordinator {
 
   public waitForPoll(signal?: AbortSignal): Promise<void> {
     return wait(this.#options.pollIntervalMs, signal);
+  }
+
+  public async acquireRequestPacingLease(
+    minIntervalMs: number,
+    signal?: AbortSignal,
+  ): Promise<PersistentLease> {
+    const lockKey = this.#requestPacingLockKey();
+    const owner = randomUUID();
+    let lease: PersistentLease | undefined;
+
+    while (lease === undefined) {
+      signal?.throwIfAborted();
+
+      if (await this.#store.acquireLock(lockKey, owner, this.#options.lockTtlMs)) {
+        lease = new PersistentLease(this.#store, lockKey, owner, this.#options.lockTtlMs);
+      } else {
+        await this.waitForPoll(signal);
+      }
+    }
+
+    try {
+      const nextRequestAt = decodeTimestamp(await this.#store.get(this.#nextRequestAtKey())) ?? 0;
+
+      await wait(nextRequestAt - Date.now(), signal);
+      signal?.throwIfAborted();
+
+      const nextStart = Date.now() + minIntervalMs;
+      await this.#store.set(
+        this.#nextRequestAtKey(),
+        encoder.encode(String(nextStart)),
+        Math.max(1, minIntervalMs),
+      );
+
+      return lease;
+    } catch (error) {
+      await lease.release();
+      throw error;
+    }
   }
 
   public async getCooldownRemainingMs(path: string | URL): Promise<number> {

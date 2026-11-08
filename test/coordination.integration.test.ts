@@ -149,5 +149,53 @@ describe('cross-instance coordination', () => {
     });
     expect(requestCount).toBe(countAfterRateLimit);
     expect(secondClient.cooldownRemainingMs).toBeGreaterThan(0);
+    expect(store.locks.size).toBe(0);
+  });
+
+  it('spaces unrelated HTTP requests across client instances', async () => {
+    const store = new TestCoordinatedCacheStore();
+    const starts: number[] = [];
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      starts.push(Date.now());
+
+      return responseWithUrl(
+        `)]}',\n${JSON.stringify({
+          default: {
+            topics: [
+              {
+                mid: '/m/test',
+                title: 'Test topic',
+                type: 'Topic',
+              },
+            ],
+          },
+        })}`,
+        url.toString(),
+      );
+    };
+    const baseOptions = clientOptions(store, fakeFetch);
+    const options = {
+      ...baseOptions,
+      rateLimit: { ...baseOptions.rateLimit, minIntervalMs: 25 },
+      cache: {
+        ...baseOptions.cache,
+        coordination: {
+          ...baseOptions.cache.coordination,
+          pollIntervalMs: 2,
+        },
+      },
+    } as const;
+    const firstClient = createClient(options);
+    const secondClient = createClient(options);
+
+    await Promise.all([
+      firstClient.autocomplete({ keyword: 'TypeScript' }),
+      secondClient.autocomplete({ keyword: 'JavaScript' }),
+    ]);
+
+    expect(starts).toHaveLength(2);
+    expect(Math.abs((starts[1] as number) - (starts[0] as number))).toBeGreaterThanOrEqual(20);
+    expect(store.locks.size).toBe(0);
   });
 });

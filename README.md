@@ -527,6 +527,8 @@ when all three methods are present. It provides:
 - Lock-expiry recovery when an owner process exits unexpectedly.
 - Endpoint-specific shared HTTP 429 cooldowns, keeping the longest observed deadline.
 - Stale-cache fallback in one instance when another instance has already observed a cooldown.
+- Shared serialization and minimum start spacing for every underlying HTTP request, including the
+  separate Explore and data requests made by one high-level operation.
 
 Tune or disable it with:
 
@@ -536,6 +538,7 @@ const trends = createClient({
     store,
     coordination: {
       enabled: true,
+      sharedRequestPacing: true,
       lockTtlMs: 30_000,
       pollIntervalMs: 100,
     },
@@ -543,8 +546,18 @@ const trends = createClient({
 });
 ```
 
+| Coordination option   | Default | Description                                                     |
+| --------------------- | ------- | --------------------------------------------------------------- |
+| `enabled`             | Auto    | Enabled when the store implements all atomic lease methods      |
+| `sharedRequestPacing` | `true`  | Serialize and space HTTP starts across coordinated clients      |
+| `lockTtlMs`           | `30000` | Lease TTL, renewed while the owner is still working             |
+| `pollIntervalMs`      | `100`   | Delay before a waiter rechecks a contested lock or cached value |
+
 `pollIntervalMs` must be shorter than `lockTtlMs`. A regular `CacheStore` remains fully supported;
-it shares completed results without cross-instance locking or cooldown coordination.
+it shares completed results without cross-instance locking, cooldown coordination, or request
+pacing. Coordinated clients sharing a `keyPrefix` should use the same `minIntervalMs`; set
+`sharedRequestPacing: false` only when another infrastructure layer already enforces a global
+request budget.
 
 ## Caching, deduplication, and rate limits
 
@@ -589,9 +602,8 @@ await trends.clearCache();
 
 Without a `store`, the cache is local to one client instance. A regular persistent store shares
 completed results. A `CoordinatedCacheStore` also coalesces identical misses and shares observed
-cooldowns, but it does not bypass Google's rate limits. Minimum request spacing across unrelated
-requests remains client-local. Returned results are cloned, so changing one result does not mutate
-the cached value returned to another caller.
+cooldowns and request pacing, but it does not bypass Google's rate limits. Returned results are
+cloned, so changing one result does not mutate the cached value returned to another caller.
 
 ## Cancellation
 
@@ -725,9 +737,8 @@ await trends.warmup();
 - Supply a persistent `CacheStore` when multiple processes or serverless invocations should reuse
   completed results.
 - Implement `CoordinatedCacheStore` atomic leases to deduplicate identical cross-process misses and
-  share endpoint cooldowns.
-- Reuse one client inside each process; request spacing for unrelated keys and cookie sessions are
-  still process-local.
+  share endpoint cooldowns and request pacing.
+- Reuse one client inside each process; cookie sessions remain process-local.
 
 ### Preserve Google semantics
 

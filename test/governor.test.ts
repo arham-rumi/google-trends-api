@@ -131,6 +131,24 @@ describe('RequestGovernor', () => {
     expect(governor.getCooldownRemainingMs('/limited-b')).toBeLessThanOrEqual(20);
   });
 
+  it('preserves the request error when releasing a shared pacing lease also fails', async () => {
+    const requestError = new Error('request failed');
+    const releaseError = new Error('release failed');
+    const release = vi.fn(async () => {
+      throw releaseError;
+    });
+    const governor = new RequestGovernor(resolveRateLimitOptions({ minIntervalMs: 25 }), {
+      acquireRequestPacingLease: vi.fn(async () => ({ release })),
+    });
+
+    await expect(
+      governor.execute(async () => {
+        throw requestError;
+      }),
+    ).rejects.toBe(requestError);
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('rejects invalid recovery delays', () => {
     expect(() =>
       resolveRateLimitOptions({

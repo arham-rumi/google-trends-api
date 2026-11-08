@@ -40,6 +40,7 @@ function createCache(store: CacheStore, keyPrefix = 'test:v1:'): ResultCache {
     keyPrefix,
     coordination: {
       enabled: false,
+      sharedRequestPacing: true,
       lockTtlMs: 30_000,
       pollIntervalMs: 100,
     },

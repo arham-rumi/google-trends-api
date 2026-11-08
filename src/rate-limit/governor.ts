@@ -20,6 +20,17 @@ interface EndpointRateLimitState {
   cooldownUntil: number;
 }
 
+export interface SharedRequestLease {
+  release(): void | Promise<void>;
+}
+
+export interface SharedRequestPacer {
+  acquireRequestPacingLease(
+    minIntervalMs: number,
+    signal?: AbortSignal,
+  ): Promise<SharedRequestLease>;
+}
+
 function wait(delayMs: number, signal?: AbortSignal): Promise<void> {
   if (delayMs <= 0) {
     signal?.throwIfAborted();
@@ -77,12 +88,14 @@ export function resolveRateLimitOptions(options: RateLimitOptions = {}): Resolve
 
 export class RequestGovernor {
   readonly #options: Readonly<ResolvedRateLimitOptions>;
+  readonly #sharedPacer: SharedRequestPacer | undefined;
   readonly #endpointStates = new Map<string, EndpointRateLimitState>();
   #tail: Promise<void> = Promise.resolve();
   #nextStartAt = 0;
 
-  public constructor(options: ResolvedRateLimitOptions) {
+  public constructor(options: ResolvedRateLimitOptions, sharedPacer?: SharedRequestPacer) {
     this.#options = options;
+    this.#sharedPacer = sharedPacer;
   }
 
   public get cooldownRemainingMs(): number {
@@ -126,21 +139,34 @@ export class RequestGovernor {
 
     const resolvedKey = this.#resolveKey(rateLimitKey);
     const run = async (): Promise<T> => {
-      signal?.throwIfAborted();
-
+      let sharedLease: SharedRequestLease | undefined;
+      let failed = false;
+      let failure: unknown;
+      let operationStarted = false;
+      let value: T | undefined;
       const state = this.#getState(resolvedKey);
-      const allowedAt = Math.max(this.#nextStartAt, state.cooldownUntil);
-      await wait(allowedAt - Date.now(), signal);
-      signal?.throwIfAborted();
-
-      this.#nextStartAt = Date.now() + this.#options.minIntervalMs;
 
       try {
-        const value = await operation();
+        signal?.throwIfAborted();
+
+        const allowedAt = Math.max(this.#nextStartAt, state.cooldownUntil);
+        await wait(allowedAt - Date.now(), signal);
+        signal?.throwIfAborted();
+
+        sharedLease = await this.#sharedPacer?.acquireRequestPacingLease(
+          this.#options.minIntervalMs,
+          signal,
+        );
+        signal?.throwIfAborted();
+        this.#nextStartAt = Date.now() + this.#options.minIntervalMs;
+        operationStarted = true;
+        value = await operation();
         this.#endpointStates.delete(resolvedKey);
-        return value;
       } catch (error) {
-        if (error instanceof RateLimitError) {
+        failed = true;
+        failure = error;
+
+        if (operationStarted && error instanceof RateLimitError) {
           const configuredDelay = this.#options.recovery
             ? this.#options.recoveryDelaysMs[
                 Math.min(
@@ -156,9 +182,27 @@ export class RequestGovernor {
           state.cooldownUntil = Math.max(state.cooldownUntil, Date.now() + cooldownMs);
           this.#endpointStates.set(resolvedKey, state);
         }
-
-        throw error;
       }
+
+      let releaseFailed = false;
+      let releaseFailure: unknown;
+
+      try {
+        await sharedLease?.release();
+      } catch (error) {
+        releaseFailed = true;
+        releaseFailure = error;
+      }
+
+      if (failed) {
+        throw failure;
+      }
+
+      if (releaseFailed) {
+        throw releaseFailure;
+      }
+
+      return value as T;
     };
 
     const result = this.#tail.then(run, run);
