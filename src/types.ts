@@ -98,8 +98,11 @@ export interface ResolvedGoogleTrendsClientOptions {
 }
 
 export type {
+  CacheCoordinationOptions,
   CacheOptions,
   CacheStore,
   CacheStoreResult,
+  CoordinatedCacheStore,
+  ResolvedCacheCoordinationOptions,
   ResolvedCacheOptions,
 } from './cache/types.js';

@@ -38,6 +38,11 @@ function createCache(store: CacheStore, keyPrefix = 'test:v1:'): ResultCache {
     maxEntries: 10,
     store,
     keyPrefix,
+    coordination: {
+      enabled: false,
+      lockTtlMs: 30_000,
+      pollIntervalMs: 100,
+    },
   });
 }
 
@@ -55,7 +60,7 @@ describe('ResultCache', () => {
 
     expect(store.entries.size).toBe(1);
     expect([...store.ttls.values()]).toEqual([300]);
-    expect([...store.entries.keys()][0]).toMatch(/^test:v1:[a-f\d]{64}$/);
+    expect([...store.entries.keys()][0]).toMatch(/^test:v1:results:[a-f\d]{64}$/);
 
     const lookup = await second.get<typeof value>('interestOverTime:{...}', 1_050);
 

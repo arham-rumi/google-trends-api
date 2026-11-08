@@ -5,6 +5,7 @@ import {
   INTEREST_BY_REGION_RESOLUTIONS,
   createClient,
 } from '../src/index.js';
+import { TestCoordinatedCacheStore } from './support/coordinated-cache-store.js';
 
 describe('createClient', () => {
   it('creates a client with safe defaults', () => {
@@ -30,6 +31,11 @@ describe('createClient', () => {
         staleIfErrorMs: 86_400_000,
         maxEntries: 100,
         keyPrefix: 'google-trends-api:v1:',
+        coordination: {
+          enabled: false,
+          lockTtlMs: 30_000,
+          pollIntervalMs: 100,
+        },
       },
     });
 
@@ -45,6 +51,25 @@ describe('createClient', () => {
     expect(() => createClient({ rateLimit: { recoveryDelaysMs: [-1] } })).toThrow(RangeError);
     expect(() => createClient({ cache: { maxEntries: 0 } })).toThrow(RangeError);
     expect(() => createClient({ cache: { keyPrefix: '' } })).toThrow(RangeError);
+    expect(() => createClient({ cache: { coordination: { enabled: true } } })).toThrow(TypeError);
+    expect(() =>
+      createClient({
+        cache: {
+          store: new TestCoordinatedCacheStore(),
+          coordination: { lockTtlMs: 100, pollIntervalMs: 100 },
+        },
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it('enables coordination automatically for a capable cache store', () => {
+    const client = createClient({ cache: { store: new TestCoordinatedCacheStore() } });
+
+    expect(client.options.cache.coordination).toEqual({
+      enabled: true,
+      lockTtlMs: 30_000,
+      pollIntervalMs: 100,
+    });
   });
 });
 

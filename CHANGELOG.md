@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   processes, and serverless invocations while retaining the bounded in-memory L1 cache.
 - Added versioned opaque serialization, persistent TTL handling, prefix-scoped clearing, and
   fixed-length hashed cache keys. Cached `Date` values and result-cloning behavior are preserved.
+- Added optional `CoordinatedCacheStore` atomic leases for cross-instance request coalescing,
+  renewable locks, owner-safe release, and lock-expiry recovery.
+- Added persistent endpoint-specific HTTP 429 cooldown coordination so one instance can prevent
+  another from making an avoidable request and can unlock shared stale-cache fallback.
 
 ### Changed
 
@@ -27,6 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Extended deep Interest Over Time verification to compare per-item geography requests and package
   output directly against Google's raw response without adding extra live requests.
+- Added deterministic lease, shared-cooldown, concurrent-client, and coordinated stale-fallback
+  coverage.
 
 ## 0.2.4 - 2026-08-08
 

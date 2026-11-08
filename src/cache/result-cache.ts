@@ -49,7 +49,7 @@ function encodePayload(value: unknown, cachedAt: number): Uint8Array {
 
 function persistentKey(prefix: string, key: string): string {
   const digest = createHash('sha256').update(key).digest('hex');
-  return `${prefix}${digest}`;
+  return `${prefix}results:${digest}`;
 }
 
 function validateStoredBytes(value: unknown, key: string): asserts value is Uint8Array | undefined {
@@ -122,7 +122,7 @@ export class ResultCache {
     this.#memory.clear();
 
     if (this.#store !== undefined) {
-      await this.#store.clear(this.#options.keyPrefix);
+      await this.#store.clear(`${this.#options.keyPrefix}results:`);
     }
   }
 }

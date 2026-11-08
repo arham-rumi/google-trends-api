@@ -38,6 +38,11 @@ import {
 } from './google/trending-now.js';
 import { HttpSession, type HttpSessionWarmupOptions } from './http/session.js';
 import { resolveRateLimitOptions } from './rate-limit/governor.js';
+import {
+  isCoordinatedCacheStore,
+  PersistentCoordinator,
+  type PersistentLease,
+} from './rate-limit/persistent-coordinator.js';
 import { createRequestKey } from './rate-limit/request-key.js';
 import { attachResultMetadata, type ResultMetadata } from './result-metadata.js';
 import type { GoogleTrendsClientOptions, ResolvedGoogleTrendsClientOptions } from './types.js';
@@ -73,12 +78,20 @@ function inferRegionFromLocale(locale: string): string | undefined {
 function resolveCacheOptions(
   options: GoogleTrendsClientOptions['cache'] = {},
 ): ResolvedCacheOptions {
+  const cacheEnabled = options.enabled ?? true;
+  const coordination = {
+    enabled:
+      options.coordination?.enabled ?? (cacheEnabled && isCoordinatedCacheStore(options.store)),
+    lockTtlMs: options.coordination?.lockTtlMs ?? 30_000,
+    pollIntervalMs: options.coordination?.pollIntervalMs ?? 100,
+  };
   const resolved: ResolvedCacheOptions = {
-    enabled: options.enabled ?? true,
+    enabled: cacheEnabled,
     ttlMs: options.ttlMs ?? 15 * 60_000,
     staleIfErrorMs: options.staleIfErrorMs ?? 24 * 60 * 60_000,
     maxEntries: options.maxEntries ?? 100,
     keyPrefix: options.keyPrefix ?? DEFAULT_CACHE_KEY_PREFIX,
+    coordination: Object.freeze(coordination),
     ...(options.store === undefined ? {} : { store: options.store }),
   };
 
@@ -106,6 +119,30 @@ function resolveCacheOptions(
       typeof resolved.store.clear !== 'function')
   ) {
     throw new TypeError('cache.store must implement get, set, delete, and clear.');
+  }
+
+  if (!Number.isFinite(coordination.lockTtlMs) || coordination.lockTtlMs <= 0) {
+    throw new RangeError('cache.coordination.lockTtlMs must be greater than zero.');
+  }
+
+  if (!Number.isFinite(coordination.pollIntervalMs) || coordination.pollIntervalMs <= 0) {
+    throw new RangeError('cache.coordination.pollIntervalMs must be greater than zero.');
+  }
+
+  if (coordination.pollIntervalMs >= coordination.lockTtlMs) {
+    throw new RangeError(
+      'cache.coordination.pollIntervalMs must be less than cache.coordination.lockTtlMs.',
+    );
+  }
+
+  if (coordination.enabled && !resolved.enabled) {
+    throw new TypeError('cache.coordination cannot be enabled when caching is disabled.');
+  }
+
+  if (coordination.enabled && !isCoordinatedCacheStore(resolved.store)) {
+    throw new TypeError(
+      'cache.coordination requires a store with acquireLock, refreshLock, and releaseLock.',
+    );
   }
 
   return resolved;
@@ -173,12 +210,21 @@ export class GoogleTrendsClient {
 
   readonly #session: HttpSession;
   readonly #cache: ResultCache;
+  readonly #coordinator: PersistentCoordinator | undefined;
   readonly #inflight = new Map<string, InflightEntry<object>>();
   #warmupPromise: Promise<void> | undefined;
 
   public constructor(options: GoogleTrendsClientOptions = {}) {
     this.options = Object.freeze(resolveOptions(options));
     this.#cache = new ResultCache(this.options.cache);
+    this.#coordinator =
+      this.options.cache.coordination.enabled && isCoordinatedCacheStore(this.options.cache.store)
+        ? new PersistentCoordinator(
+            this.options.cache.store,
+            this.options.cache.keyPrefix,
+            this.options.cache.coordination,
+          )
+        : undefined;
     this.#session = new HttpSession({
       baseUrl: GOOGLE_TRENDS_BASE_URL,
       timeoutMs: this.options.timeoutMs,
@@ -203,7 +249,10 @@ export class GoogleTrendsClient {
   }
 
   public get cooldownRemainingMs(): number {
-    return this.#session.cooldownRemainingMs;
+    return Math.max(
+      this.#session.cooldownRemainingMs,
+      this.#coordinator?.observedCooldownRemainingMs ?? 0,
+    );
   }
 
   public clearCache(): Promise<void> {
@@ -247,6 +296,7 @@ export class GoogleTrendsClient {
   }
 
   async #refreshSession(rateLimitedUrl: string, signal: AbortSignal): Promise<void> {
+    await this.#coordinator?.waitForCooldown([rateLimitedUrl], signal);
     await this.#session.waitForCooldown(signal, rateLimitedUrl);
     signal.throwIfAborted();
 
@@ -277,6 +327,10 @@ export class GoogleTrendsClient {
 
         return await this.#runTokenizedOnce(operation, signal);
       } catch (error) {
+        if (error instanceof RateLimitError) {
+          await this.#publishRateLimit(error, signal);
+        }
+
         if (
           !(error instanceof RateLimitError) ||
           !recoveryEnabled ||
@@ -348,8 +402,30 @@ export class GoogleTrendsClient {
     };
   }
 
-  #hasRelevantCooldown(paths: readonly (string | URL)[]): boolean {
-    return paths.some((path) => this.#session.getCooldownRemainingMs(path) > 0);
+  async #publishRateLimit(error: RateLimitError, signal?: AbortSignal): Promise<void> {
+    if (this.#coordinator === undefined || !this.options.rateLimit.enabled) {
+      return;
+    }
+
+    const remainingMs = Math.max(
+      this.#session.getCooldownRemainingMs(error.url),
+      error.retryAfterMs ?? 0,
+    );
+
+    if (remainingMs > 0) {
+      await this.#coordinator.extendCooldown(error.url, Date.now() + remainingMs, signal);
+    }
+  }
+
+  async #hasRelevantCooldown(paths: readonly (string | URL)[]): Promise<boolean> {
+    if (paths.some((path) => this.#session.getCooldownRemainingMs(path) > 0)) {
+      return true;
+    }
+
+    return (
+      this.#coordinator !== undefined &&
+      (await this.#coordinator.getMaximumCooldownRemainingMs(paths)) > 0
+    );
   }
 
   async #executeOperation<T extends object>(
@@ -363,18 +439,58 @@ export class GoogleTrendsClient {
     key: string,
     signal: AbortSignal,
   ): Promise<OperationOutcome<T>> {
-    const cached = await this.#cache.get<T>(key);
+    let cached = await this.#cache.get<T>(key);
+    let lease: PersistentLease | undefined;
     signal.throwIfAborted();
 
     if (cached?.state === 'fresh') {
       return this.#cacheOutcome(cached);
     }
 
-    if (cached?.state === 'stale' && this.#hasRelevantCooldown(options.rateLimitPaths)) {
+    if (cached?.state === 'stale' && (await this.#hasRelevantCooldown(options.rateLimitPaths))) {
       return this.#cacheOutcome(cached);
     }
 
     try {
+      if (this.#coordinator !== undefined) {
+        await this.#coordinator.waitForCooldown(options.rateLimitPaths, signal);
+
+        while (lease === undefined) {
+          lease = await this.#coordinator.tryAcquireRequest(key);
+
+          if (lease === undefined) {
+            await this.#coordinator.waitForPoll(signal);
+            cached = await this.#cache.get<T>(key);
+            signal.throwIfAborted();
+
+            if (cached?.state === 'fresh') {
+              return this.#cacheOutcome(cached);
+            }
+
+            if (
+              cached?.state === 'stale' &&
+              (await this.#hasRelevantCooldown(options.rateLimitPaths))
+            ) {
+              return this.#cacheOutcome(cached);
+            }
+          }
+        }
+
+        cached = await this.#cache.get<T>(key);
+        signal.throwIfAborted();
+
+        if (cached?.state === 'fresh') {
+          return this.#cacheOutcome(cached);
+        }
+
+        if (
+          cached?.state === 'stale' &&
+          (await this.#hasRelevantCooldown(options.rateLimitPaths))
+        ) {
+          return this.#cacheOutcome(cached);
+        }
+      }
+
       const value = options.tokenized
         ? await this.#runTokenized(options.operation, signal, cached?.state !== 'stale')
         : await options.operation(signal);
@@ -385,11 +501,17 @@ export class GoogleTrendsClient {
         source: 'network',
       };
     } catch (error) {
-      if (error instanceof RateLimitError && cached?.state === 'stale') {
-        return this.#cacheOutcome(cached);
+      if (error instanceof RateLimitError) {
+        await this.#publishRateLimit(error, signal);
+
+        if (cached?.state === 'stale') {
+          return this.#cacheOutcome(cached);
+        }
       }
 
       throw error;
+    } finally {
+      await lease?.release();
     }
   }
 

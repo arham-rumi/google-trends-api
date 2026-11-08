@@ -444,6 +444,7 @@ Disabling all rate-limit protection is possible but is not recommended for norma
 | `maxEntries`     | `100`                     | Maximum results kept in this client's in-memory L1 cache      |
 | `store`          | `undefined`               | Optional synchronous or asynchronous persistent cache adapter |
 | `keyPrefix`      | `'google-trends-api:v1:'` | Namespace used for persistent cache entries                   |
+| `coordination`   | Auto-detected             | Cross-instance locks and shared cooldown settings             |
 
 Use a long-lived client instance to benefit from its session, request governor, deduplication, and
 cache. Creating a new client for every call defeats those protections.
@@ -490,6 +491,61 @@ must not share cached data.
 Cache-store errors reject the request instead of silently bypassing the shared cache. This makes a
 broken adapter visible and avoids an unnoticed burst of requests to Google.
 
+#### Cross-instance coordination
+
+To prevent identical cache misses in different processes from all reaching Google, implement the
+three atomic lease methods in `CoordinatedCacheStore`:
+
+```ts
+import type { CoordinatedCacheStore } from '@arham-rumi/google-trends-api';
+
+const store: CoordinatedCacheStore = {
+  // get(), set(), delete(), and clear() are the CacheStore methods shown above.
+  ...persistentStore,
+
+  async acquireLock(key, owner, ttlMs) {
+    // Atomically create the lock only when it does not already exist.
+    return locks.setIfAbsent(key, owner, { ttlMs });
+  },
+  async refreshLock(key, owner, ttlMs) {
+    // Atomically extend the TTL only when the stored owner still matches.
+    return locks.refreshIfOwner(key, owner, { ttlMs });
+  },
+  async releaseLock(key, owner) {
+    // Atomically delete only when the stored owner still matches.
+    await locks.deleteIfOwner(key, owner);
+  },
+};
+```
+
+These operations must be atomic; for Redis-like stores, use compare-and-delete/refresh scripts
+rather than a separate `GET` followed by `DEL` or `EXPIRE`. Coordination is enabled automatically
+when all three methods are present. It provides:
+
+- Cross-instance singleflight for identical requests, with cache rechecks before and after locking.
+- Renewable leases so a normal long-running request does not lose its lock.
+- Lock-expiry recovery when an owner process exits unexpectedly.
+- Endpoint-specific shared HTTP 429 cooldowns, keeping the longest observed deadline.
+- Stale-cache fallback in one instance when another instance has already observed a cooldown.
+
+Tune or disable it with:
+
+```ts
+const trends = createClient({
+  cache: {
+    store,
+    coordination: {
+      enabled: true,
+      lockTtlMs: 30_000,
+      pollIntervalMs: 100,
+    },
+  },
+});
+```
+
+`pollIntervalMs` must be shorter than `lockTtlMs`. A regular `CacheStore` remains fully supported;
+it shares completed results without cross-instance locking or cooldown coordination.
+
 ## Caching, deduplication, and rate limits
 
 The default request path works as follows:
@@ -528,14 +584,14 @@ await trends.clearCache();
 
 - `cacheSize` is the number of entries in this client's in-memory L1 cache.
 - `cooldownRemainingMs` is the largest current endpoint cooldown observed by this client.
-- `clearCache()` clears L1 and the configured persistent-cache namespace. It does not reset cookies
-  or cooldowns.
+- `clearCache()` clears L1 and the configured persistent result entries. It does not reset cookies,
+  locks, or cooldowns.
 
-Without a `store`, the cache is local to one client instance. A persistent store shares completed
-results, but it does not coordinate simultaneous misses between processes and does not bypass
-Google's rate limits. In-flight deduplication and request pacing remain client-local. Returned
-results are cloned, so changing one result does not mutate the cached value returned to another
-caller.
+Without a `store`, the cache is local to one client instance. A regular persistent store shares
+completed results. A `CoordinatedCacheStore` also coalesces identical misses and shares observed
+cooldowns, but it does not bypass Google's rate limits. Minimum request spacing across unrelated
+requests remains client-local. Returned results are cloned, so changing one result does not mutate
+the cached value returned to another caller.
 
 ## Cancellation
 
@@ -668,8 +724,10 @@ await trends.warmup();
 - Keep `maxEntries` bounded when accepting arbitrary user-supplied comparisons.
 - Supply a persistent `CacheStore` when multiple processes or serverless invocations should reuse
   completed results.
-- Reuse one client inside each process: persistent caching does not yet provide distributed locking,
-  shared in-flight deduplication, or shared cooldown state.
+- Implement `CoordinatedCacheStore` atomic leases to deduplicate identical cross-process misses and
+  share endpoint cooldowns.
+- Reuse one client inside each process; request spacing for unrelated keys and cookie sessions are
+  still process-local.
 
 ### Preserve Google semantics
 

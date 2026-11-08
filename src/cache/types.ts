@@ -13,6 +13,35 @@ export interface CacheStore {
   clear(keyPrefix: string): CacheStoreResult<void>;
 }
 
+/**
+ * Cache store with atomic lease operations for cross-instance coordination.
+ *
+ * Lock acquisition must behave like set-if-absent with a TTL. Refresh and release must only
+ * modify a lock when its current owner matches `owner`.
+ */
+export interface CoordinatedCacheStore extends CacheStore {
+  acquireLock(key: string, owner: string, ttlMs: number): CacheStoreResult<boolean>;
+  refreshLock(key: string, owner: string, ttlMs: number): CacheStoreResult<boolean>;
+  releaseLock(key: string, owner: string): CacheStoreResult<void>;
+}
+
+export interface CacheCoordinationOptions {
+  /** Enables cross-instance request coalescing and shared cooldowns. */
+  enabled?: boolean;
+
+  /** Lease duration for distributed request locks. Defaults to 30 seconds. */
+  lockTtlMs?: number;
+
+  /** Delay between cache checks while another instance owns a request. Defaults to 100 ms. */
+  pollIntervalMs?: number;
+}
+
+export interface ResolvedCacheCoordinationOptions {
+  enabled: boolean;
+  lockTtlMs: number;
+  pollIntervalMs: number;
+}
+
 export interface CacheOptions {
   /** Enables caching. Defaults to true. */
   enabled?: boolean;
@@ -31,6 +60,9 @@ export interface CacheOptions {
 
   /** Namespace used for persistent cache keys. Defaults to "google-trends-api:v1:". */
   keyPrefix?: string;
+
+  /** Cross-instance coordination settings for stores that implement atomic lease methods. */
+  coordination?: CacheCoordinationOptions;
 }
 
 export interface ResolvedCacheOptions {
@@ -40,6 +72,7 @@ export interface ResolvedCacheOptions {
   maxEntries: number;
   store?: CacheStore;
   keyPrefix: string;
+  coordination: Readonly<ResolvedCacheCoordinationOptions>;
 }
 
 export type CacheEntryState = 'fresh' | 'stale';

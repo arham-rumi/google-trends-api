@@ -68,9 +68,11 @@ export type {
 } from './google/related-searches.js';
 
 export type {
+  CacheCoordinationOptions,
   CacheOptions,
   CacheStore,
   CacheStoreResult,
+  CoordinatedCacheStore,
   FetchLike,
   GoogleTrendsClientOptions,
   HttpHeadersInit,
@@ -78,6 +80,7 @@ export type {
   QueryPrimitive,
   QueryValue,
   RateLimitOptions,
+  ResolvedCacheCoordinationOptions,
   ResolvedCacheOptions,
   ResolvedGoogleTrendsClientOptions,
   ResolvedRateLimitOptions,
