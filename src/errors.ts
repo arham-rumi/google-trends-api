@@ -1,6 +1,7 @@
 export type GoogleTrendsErrorCode =
   | 'HTTP_STATUS'
   | 'RATE_LIMITED'
+  | 'REQUEST_BUDGET_EXCEEDED'
   | 'REQUEST_TIMEOUT'
   | 'REQUEST_ABORTED'
   | 'NETWORK_ERROR'
@@ -55,6 +56,35 @@ export class RateLimitError extends GoogleTrendsError {
     this.url = options.url;
     this.responseBody = options.responseBody;
     this.retryAfterMs = options.retryAfterMs;
+  }
+}
+
+export type RequestBudgetReason = 'queue-full' | 'queue-timeout' | 'circuit-open';
+
+export class RequestBudgetExceededError extends GoogleTrendsError {
+  public readonly reason: RequestBudgetReason;
+  public readonly retryAfterMs: number | undefined;
+  public readonly pendingRequests: number | undefined;
+  public readonly maxPendingRequests: number | undefined;
+
+  public constructor(options: {
+    reason: RequestBudgetReason;
+    retryAfterMs?: number;
+    pendingRequests?: number;
+    maxPendingRequests?: number;
+  }) {
+    const detail =
+      options.reason === 'queue-full'
+        ? 'The local request queue is full.'
+        : options.reason === 'queue-timeout'
+          ? 'The request exceeded its maximum queue wait.'
+          : 'The protective rate-limit circuit is open.';
+
+    super(detail, 'REQUEST_BUDGET_EXCEEDED');
+    this.reason = options.reason;
+    this.retryAfterMs = options.retryAfterMs;
+    this.pendingRequests = options.pendingRequests;
+    this.maxPendingRequests = options.maxPendingRequests;
   }
 }
 

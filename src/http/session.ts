@@ -82,6 +82,14 @@ export class HttpSession {
     return this.#context.governor.requestIntervalMs;
   }
 
+  public get pendingRequests(): number {
+    return this.#context.governor.pendingRequests;
+  }
+
+  public get circuitRemainingMs(): number {
+    return this.#context.governor.circuitRemainingMs;
+  }
+
   public getCooldownRemainingMs(path: string | URL): number {
     return this.#context.governor.getCooldownRemainingMs(this.#resolveRateLimitKey(path));
   }

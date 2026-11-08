@@ -389,6 +389,13 @@ const trends = createClient({
       recoveryFactor: 0.75,
       successThreshold: 4,
     },
+    requestBudget: {
+      enabled: true,
+      maxPendingRequests: 100,
+      maxQueueWaitMs: 120_000,
+      circuitBreakerThreshold: 3,
+      circuitOpenMs: 300_000,
+    },
   },
   cache: {
     enabled: true,
@@ -424,6 +431,7 @@ const trends = createClient({
 | `recovery`         | `true`                                     | Recover tokenized Explore flows after HTTP 429 |
 | `recoveryDelaysMs` | 1, 2, 3, 5, 10, 15, 20, 25, and 30 minutes | Delays before successive recovery attempts     |
 | `adaptivePacing`   | See below                                  | Increase spacing after 429s and recover slowly |
+| `requestBudget`    | See below                                  | Bound queued work and fail fast when unsafe    |
 
 Adaptive pacing is enabled by default. It starts at `minIntervalMs`, doubles the current interval
 after each HTTP 429, caps it at 30 seconds by default, and reduces it by 25% only after four
@@ -453,6 +461,26 @@ const trends = createClient({
   },
 });
 ```
+
+Request budgeting is also enabled by default. It prevents an overloaded application from building
+an unbounded internal queue and stops sending requests to an endpoint that repeatedly returns 429:
+
+| Request-budget option     | Default   | Description                                             |
+| ------------------------- | --------- | ------------------------------------------------------- |
+| `enabled`                 | `true`    | Enable queue admission and circuit protection           |
+| `maxPendingRequests`      | `100`     | Maximum active and waiting HTTP requests per client     |
+| `maxQueueWaitMs`          | 2 minutes | Maximum time admitted work may wait before starting     |
+| `circuitBreakerThreshold` | `3`       | Consecutive endpoint 429s required to open its circuit  |
+| `circuitOpenMs`           | 5 minutes | Time new work for that endpoint is rejected immediately |
+
+Queue capacity and queue waiting are local to each client because they protect that process's
+memory and latency. Endpoint circuit state is persisted when coordinated request pacing is active,
+so repeated 429s observed by different processes contribute to the same circuit. A successful
+probe closes that endpoint's circuit; unrelated endpoints remain available.
+
+`RequestBudgetExceededError` is raised with one of three `reason` values: `queue-full`,
+`queue-timeout`, or `circuit-open`. Its `retryAfterMs` is a useful lower-bound hint when present.
+Eligible stale cache data is returned before this error is surfaced.
 
 Automatic recovery applies to tokenized Explore operations. It waits for the relevant endpoint's
 cooldown, resets the cookie session, performs a fresh warm-up, and restarts the complete tokenized
@@ -629,6 +657,8 @@ The metadata is attached out-of-band and does not alter Google's normalized resu
 console.log(trends.cacheSize);
 console.log(trends.cooldownRemainingMs);
 console.log(trends.requestIntervalMs);
+console.log(trends.pendingRequests);
+console.log(trends.circuitRemainingMs);
 
 await trends.clearCache();
 ```
@@ -637,6 +667,8 @@ await trends.clearCache();
 - `cooldownRemainingMs` is the largest current endpoint cooldown observed by this client.
 - `requestIntervalMs` is the request interval currently observed by this client, including adaptive
   backoff learned from coordinated peers.
+- `pendingRequests` is this client's active and waiting HTTP request count.
+- `circuitRemainingMs` is the longest currently open local endpoint circuit.
 - `clearCache()` clears L1 and the configured persistent result entries. It does not reset cookies,
   locks, or cooldowns.
 
@@ -685,6 +717,7 @@ import {
   GoogleTrendsError,
   RateLimitError,
   RequestAbortedError,
+  RequestBudgetExceededError,
   RequestTimeoutError,
   createClient,
 } from '@arham-rumi/google-trends-api';
@@ -694,6 +727,8 @@ try {
 } catch (error) {
   if (error instanceof RateLimitError) {
     console.error('Rate limited:', error.url, error.retryAfterMs);
+  } else if (error instanceof RequestBudgetExceededError) {
+    console.error('Request protected:', error.reason, error.retryAfterMs);
   } else if (error instanceof RequestTimeoutError) {
     console.error('Timed out:', error.url, error.timeoutMs);
   } else if (error instanceof RequestAbortedError) {
@@ -706,15 +741,16 @@ try {
 }
 ```
 
-| Error class            | Code               | Meaning                                               |
-| ---------------------- | ------------------ | ----------------------------------------------------- |
-| `HttpStatusError`      | `HTTP_STATUS`      | Non-success HTTP status other than the typed 429 case |
-| `RateLimitError`       | `RATE_LIMITED`     | Google returned HTTP 429                              |
-| `RequestTimeoutError`  | `REQUEST_TIMEOUT`  | An HTTP attempt exceeded its timeout                  |
-| `RequestAbortedError`  | `REQUEST_ABORTED`  | The request was canceled                              |
-| `NetworkError`         | `NETWORK_ERROR`    | The network request failed                            |
-| `InvalidResponseError` | `INVALID_RESPONSE` | Google's response could not be parsed or validated    |
-| `WidgetNotFoundError`  | `WIDGET_NOT_FOUND` | Explore omitted a required widget                     |
+| Error class                  | Code                      | Meaning                                               |
+| ---------------------------- | ------------------------- | ----------------------------------------------------- |
+| `HttpStatusError`            | `HTTP_STATUS`             | Non-success HTTP status other than the typed 429 case |
+| `RateLimitError`             | `RATE_LIMITED`            | Google returned HTTP 429                              |
+| `RequestBudgetExceededError` | `REQUEST_BUDGET_EXCEEDED` | Queue or protective circuit rejected local work       |
+| `RequestTimeoutError`        | `REQUEST_TIMEOUT`         | An HTTP attempt exceeded its timeout                  |
+| `RequestAbortedError`        | `REQUEST_ABORTED`         | The request was canceled                              |
+| `NetworkError`               | `NETWORK_ERROR`           | The network request failed                            |
+| `InvalidResponseError`       | `INVALID_RESPONSE`        | Google's response could not be parsed or validated    |
+| `WidgetNotFoundError`        | `WIDGET_NOT_FOUND`        | Explore omitted a required widget                     |
 
 Invalid local inputs such as an empty keyword, unsupported property, or non-positive limit throw a
 standard `RangeError` before making the affected Google request.

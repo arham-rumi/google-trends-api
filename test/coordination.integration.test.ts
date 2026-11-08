@@ -198,4 +198,52 @@ describe('cross-instance coordination', () => {
     expect(Math.abs((starts[1] as number) - (starts[0] as number))).toBeGreaterThanOrEqual(20);
     expect(store.locks.size).toBe(0);
   });
+
+  it('uses stale data when another client has opened the shared circuit', async () => {
+    const store = new TestCoordinatedCacheStore();
+    let rateLimited = false;
+    let requestCount = 0;
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      requestCount += 1;
+
+      if (rateLimited) {
+        return responseWithUrl('Too many requests', url.toString(), { status: 429 });
+      }
+
+      return url.pathname === '/trends/api/explore'
+        ? exploreResponse(url.toString())
+        : timelineResponse(url.toString());
+    };
+    const baseOptions = clientOptions(store, fakeFetch);
+    const options = {
+      ...baseOptions,
+      rateLimit: {
+        ...baseOptions.rateLimit,
+        cooldownMs: 0,
+        adaptivePacing: { enabled: false },
+        requestBudget: {
+          circuitBreakerThreshold: 1,
+          circuitOpenMs: 1_000,
+        },
+      },
+      cache: { ...baseOptions.cache, ttlMs: 1, staleIfErrorMs: 60_000 },
+    } as const;
+    const input = { keywords: 'TypeScript', geo: 'US' } as const;
+    const firstClient = createClient(options);
+
+    await firstClient.interestOverTime(input);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    rateLimited = true;
+
+    const firstStale = await firstClient.interestOverTime(input);
+    const countAfterCircuitOpened = requestCount;
+    const secondClient = createClient(options);
+    const secondStale = await secondClient.interestOverTime(input);
+
+    expect(getResultMetadata(firstStale)).toMatchObject({ source: 'stale-cache', stale: true });
+    expect(getResultMetadata(secondStale)).toMatchObject({ source: 'stale-cache', stale: true });
+    expect(requestCount).toBe(countAfterCircuitOpened);
+    expect(store.locks.size).toBe(0);
+  });
 });

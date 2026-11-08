@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { RateLimitError } from '../src/errors.js';
+import { RateLimitError, RequestBudgetExceededError } from '../src/errors.js';
 import { RequestGovernor, resolveRateLimitOptions } from '../src/rate-limit/governor.js';
 
 describe('RequestGovernor', () => {
@@ -210,6 +210,122 @@ describe('RequestGovernor', () => {
       }),
     ).rejects.toBeInstanceOf(RateLimitError);
     expect(governor.requestIntervalMs).toBe(10);
+  });
+
+  it('rejects new work when the pending-request budget is full', async () => {
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const governor = new RequestGovernor(
+      resolveRateLimitOptions({
+        minIntervalMs: 0,
+        requestBudget: { maxPendingRequests: 2, maxQueueWaitMs: 1_000 },
+      }),
+    );
+    const first = governor.execute(async () => firstGate);
+    const second = governor.execute(async () => 'second');
+
+    expect(governor.pendingRequests).toBe(2);
+    await expect(governor.execute(async () => 'third')).rejects.toMatchObject({
+      code: 'REQUEST_BUDGET_EXCEEDED',
+      reason: 'queue-full',
+      pendingRequests: 2,
+      maxPendingRequests: 2,
+    });
+
+    releaseFirst?.();
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).resolves.toBe('second');
+    expect(governor.pendingRequests).toBe(0);
+  });
+
+  it('rejects queued work after its maximum wait without later executing it', async () => {
+    vi.useFakeTimers();
+
+    try {
+      let releaseFirst: (() => void) | undefined;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      let secondExecuted = false;
+      const governor = new RequestGovernor(
+        resolveRateLimitOptions({
+          minIntervalMs: 0,
+          requestBudget: { maxPendingRequests: 2, maxQueueWaitMs: 10 },
+        }),
+      );
+      const first = governor.execute(async () => firstGate);
+      const second = governor.execute(async () => {
+        secondExecuted = true;
+      });
+      const secondRejection = expect(second).rejects.toMatchObject({
+        code: 'REQUEST_BUDGET_EXCEEDED',
+        reason: 'queue-timeout',
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      await secondRejection;
+
+      releaseFirst?.();
+      await first;
+      await vi.runAllTimersAsync();
+      expect(secondExecuted).toBe(false);
+      expect(governor.pendingRequests).toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('opens an endpoint-specific circuit after repeated 429s', async () => {
+    vi.useFakeTimers();
+
+    try {
+      const governor = new RequestGovernor(
+        resolveRateLimitOptions({
+          minIntervalMs: 0,
+          cooldownMs: 0,
+          recovery: false,
+          requestBudget: {
+            circuitBreakerThreshold: 2,
+            circuitOpenMs: 50,
+          },
+        }),
+      );
+      const rejectFor = (path: string) =>
+        governor.execute(
+          async () => {
+            throw new RateLimitError({
+              url: `https://example.test${path}`,
+              responseBody: undefined,
+              retryAfterMs: undefined,
+            });
+          },
+          undefined,
+          path,
+        );
+
+      await expect(rejectFor('/limited')).rejects.toBeInstanceOf(RateLimitError);
+      await expect(rejectFor('/limited')).rejects.toBeInstanceOf(RateLimitError);
+      expect(governor.circuitRemainingMs).toBe(50);
+
+      await expect(
+        governor.execute(async () => 'blocked', undefined, '/limited'),
+      ).rejects.toBeInstanceOf(RequestBudgetExceededError);
+      await expect(governor.execute(async () => 'healthy', undefined, '/healthy')).resolves.toBe(
+        'healthy',
+      );
+
+      await vi.advanceTimersByTimeAsync(50);
+      await expect(governor.execute(async () => 'probe', undefined, '/limited')).resolves.toBe(
+        'probe',
+      );
+      expect(governor.circuitRemainingMs).toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it('rejects invalid recovery delays', () => {

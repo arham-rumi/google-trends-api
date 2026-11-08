@@ -1,6 +1,11 @@
 import { ResultCache } from './cache/result-cache.js';
 import type { CacheLookup, ResolvedCacheOptions } from './cache/types.js';
-import { HttpStatusError, InvalidResponseError, RateLimitError } from './errors.js';
+import {
+  HttpStatusError,
+  InvalidResponseError,
+  RateLimitError,
+  RequestBudgetExceededError,
+} from './errors.js';
 import {
   fetchAutocomplete,
   type AutocompleteOptions,
@@ -264,6 +269,16 @@ export class GoogleTrendsClient {
     return this.#session.requestIntervalMs;
   }
 
+  /** HTTP requests admitted by this client that are active or waiting. */
+  public get pendingRequests(): number {
+    return this.#session.pendingRequests;
+  }
+
+  /** Remaining local circuit-open duration observed by this client. */
+  public get circuitRemainingMs(): number {
+    return this.#session.circuitRemainingMs;
+  }
+
   public clearCache(): Promise<void> {
     return this.#cache.clear();
   }
@@ -516,6 +531,10 @@ export class GoogleTrendsClient {
         if (cached?.state === 'stale') {
           return this.#cacheOutcome(cached);
         }
+      }
+
+      if (error instanceof RequestBudgetExceededError && cached?.state === 'stale') {
+        return this.#cacheOutcome(cached);
       }
 
       throw error;

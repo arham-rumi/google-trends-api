@@ -1,16 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { CoordinatedCacheStore, ResolvedCacheCoordinationOptions } from '../cache/types.js';
+import { RequestBudgetExceededError } from '../errors.js';
+import type { ResolvedAdaptivePacingOptions, ResolvedRequestBudgetOptions } from '../types.js';
 import type { RequestPacingOutcome } from './governor.js';
-import type { ResolvedAdaptivePacingOptions } from '../types.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const ADAPTIVE_PACING_STATE_TTL_MS = 24 * 60 * 60_000;
+const CIRCUIT_STATE_TTL_MS = 60 * 60_000;
 
 interface AdaptivePacingState {
   intervalMs: number;
   successfulRequests: number;
+}
+
+interface CircuitState {
+  consecutiveRateLimits: number;
+  openUntil: number;
 }
 
 function wait(delayMs: number, signal?: AbortSignal): Promise<void> {
@@ -80,6 +87,37 @@ function decodeAdaptivePacingState(value: Uint8Array | undefined): AdaptivePacin
     return {
       intervalMs: decoded.intervalMs,
       successfulRequests: decoded.successfulRequests,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function decodeCircuitState(value: Uint8Array | undefined): CircuitState | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  try {
+    const decoded: unknown = JSON.parse(decoder.decode(value));
+
+    if (
+      typeof decoded !== 'object' ||
+      decoded === null ||
+      !('consecutiveRateLimits' in decoded) ||
+      !('openUntil' in decoded) ||
+      typeof decoded.consecutiveRateLimits !== 'number' ||
+      !Number.isInteger(decoded.consecutiveRateLimits) ||
+      decoded.consecutiveRateLimits < 0 ||
+      typeof decoded.openUntil !== 'number' ||
+      !Number.isFinite(decoded.openUntil)
+    ) {
+      return undefined;
+    }
+
+    return {
+      consecutiveRateLimits: decoded.consecutiveRateLimits,
+      openUntil: decoded.openUntil,
     };
   } catch {
     return undefined;
@@ -165,6 +203,9 @@ class AdaptivePacingLease {
   readonly #baseIntervalMs: number;
   readonly #adaptive: Readonly<ResolvedAdaptivePacingOptions>;
   readonly #state: AdaptivePacingState;
+  readonly #requestBudget: Readonly<ResolvedRequestBudgetOptions>;
+  readonly #circuitKey: string;
+  readonly #circuitState: CircuitState;
   #released = false;
 
   public constructor(options: {
@@ -175,6 +216,9 @@ class AdaptivePacingLease {
     baseIntervalMs: number;
     adaptive: Readonly<ResolvedAdaptivePacingOptions>;
     state: AdaptivePacingState;
+    requestBudget: Readonly<ResolvedRequestBudgetOptions>;
+    circuitKey: string;
+    circuitState: CircuitState;
   }) {
     this.#lease = options.lease;
     this.#store = options.store;
@@ -183,6 +227,9 @@ class AdaptivePacingLease {
     this.#baseIntervalMs = options.baseIntervalMs;
     this.#adaptive = options.adaptive;
     this.#state = options.state;
+    this.#requestBudget = options.requestBudget;
+    this.#circuitKey = options.circuitKey;
+    this.#circuitState = options.circuitState;
     this.intervalMs = options.state.intervalMs;
   }
 
@@ -215,6 +262,36 @@ class AdaptivePacingLease {
       } catch (error) {
         updateFailed = true;
         updateFailure = error;
+      }
+    }
+
+    if (this.#requestBudget.enabled) {
+      try {
+        if (outcome === 'success') {
+          await this.#store.delete(this.#circuitKey);
+        } else if (outcome === 'rate-limit') {
+          this.#circuitState.consecutiveRateLimits += 1;
+
+          if (
+            this.#circuitState.consecutiveRateLimits >= this.#requestBudget.circuitBreakerThreshold
+          ) {
+            this.#circuitState.openUntil = Math.max(
+              this.#circuitState.openUntil,
+              Date.now() + this.#requestBudget.circuitOpenMs,
+            );
+          }
+
+          await this.#store.set(
+            this.#circuitKey,
+            encoder.encode(JSON.stringify(this.#circuitState)),
+            Math.max(CIRCUIT_STATE_TTL_MS, this.#requestBudget.circuitOpenMs),
+          );
+        }
+      } catch (error) {
+        if (!updateFailed) {
+          updateFailed = true;
+          updateFailure = error;
+        }
       }
     }
 
@@ -318,6 +395,10 @@ export class PersistentCoordinator {
     return `${this.#keyPrefix}adaptive-pacing-state`;
   }
 
+  #circuitStateKey(rateLimitKey: string): string {
+    return `${this.#keyPrefix}circuit:${digest(rateLimitKey)}`;
+  }
+
   public async tryAcquireRequest(requestKey: string): Promise<PersistentLease | undefined> {
     const key = this.#requestLockKey(requestKey);
     const owner = randomUUID();
@@ -336,6 +417,8 @@ export class PersistentCoordinator {
     baseIntervalMs: number,
     requestedIntervalMs: number,
     adaptivePacing: Readonly<ResolvedAdaptivePacingOptions>,
+    requestBudget: Readonly<ResolvedRequestBudgetOptions>,
+    rateLimitKey: string,
     signal?: AbortSignal,
   ): Promise<AdaptivePacingLease> {
     const lockKey = this.#requestPacingLockKey();
@@ -357,6 +440,18 @@ export class PersistentCoordinator {
       const storedState = decodeAdaptivePacingState(
         await this.#store.get(this.#adaptivePacingStateKey()),
       );
+      const circuitKey = this.#circuitStateKey(rateLimitKey);
+      const circuitState = decodeCircuitState(await this.#store.get(circuitKey)) ?? {
+        consecutiveRateLimits: 0,
+        openUntil: 0,
+      };
+
+      if (requestBudget.enabled && circuitState.openUntil > Date.now()) {
+        throw new RequestBudgetExceededError({
+          reason: 'circuit-open',
+          retryAfterMs: circuitState.openUntil - Date.now(),
+        });
+      }
       const intervalMs = adaptivePacing.enabled
         ? Math.min(
             adaptivePacing.maxIntervalMs,
@@ -386,6 +481,9 @@ export class PersistentCoordinator {
         baseIntervalMs,
         adaptive: adaptivePacing,
         state,
+        requestBudget,
+        circuitKey,
+        circuitState,
       });
     } catch (error) {
       await lease.release();

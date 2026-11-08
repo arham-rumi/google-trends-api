@@ -26,6 +26,13 @@ describe('createClient', () => {
           recoveryFactor: 0.75,
           successThreshold: 4,
         },
+        requestBudget: {
+          enabled: true,
+          maxPendingRequests: 100,
+          maxQueueWaitMs: 120_000,
+          circuitBreakerThreshold: 3,
+          circuitOpenMs: 300_000,
+        },
         cooldownMs: 60_000,
         recovery: true,
         recoveryDelaysMs: [
@@ -50,6 +57,8 @@ describe('createClient', () => {
     expect(client.options.userAgent).toContain('Mozilla/5.0');
     expect(client.options.userAgent).toContain('Chrome/');
     expect(client.requestIntervalMs).toBe(2_500);
+    expect(client.pendingRequests).toBe(0);
+    expect(client.circuitRemainingMs).toBe(0);
   });
 
   it('rejects invalid options', () => {
@@ -70,6 +79,18 @@ describe('createClient', () => {
       RangeError,
     );
     expect(() => createClient({ rateLimit: { adaptivePacing: { successThreshold: 0 } } })).toThrow(
+      RangeError,
+    );
+    expect(() => createClient({ rateLimit: { requestBudget: { maxPendingRequests: 0 } } })).toThrow(
+      RangeError,
+    );
+    expect(() => createClient({ rateLimit: { requestBudget: { maxQueueWaitMs: 0 } } })).toThrow(
+      RangeError,
+    );
+    expect(() =>
+      createClient({ rateLimit: { requestBudget: { circuitBreakerThreshold: 0 } } }),
+    ).toThrow(RangeError);
+    expect(() => createClient({ rateLimit: { requestBudget: { circuitOpenMs: 0 } } })).toThrow(
       RangeError,
     );
     expect(() => createClient({ cache: { maxEntries: 0 } })).toThrow(RangeError);

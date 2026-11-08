@@ -26,6 +26,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   recovers gradually after a configurable consecutive-success window.
 - Persisted adaptive interval and recovery progress for coordinated clients, with
   `requestIntervalMs` exposed for runtime observability.
+- Added bounded request admission with configurable pending-work and queue-wait limits.
+- Added endpoint-specific protective circuits that open after repeated 429s, remain isolated from
+  healthy endpoints, and share state across coordinated clients.
+- Added typed `RequestBudgetExceededError` reasons for queue saturation, queue timeout, and open
+  circuits, plus pending-request and circuit observability getters.
 
 ### Changed
 
@@ -42,6 +47,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added cross-client coverage proving unrelated request keys obey the shared pacing interval.
 - Added deterministic local and cross-client adaptive backoff, recovery, validation, and
   observability coverage.
+- Added deterministic queue-capacity, queue-timeout, endpoint isolation, shared-circuit, and stale
+  circuit-fallback coverage.
 
 ## 0.2.4 - 2026-08-08
 

@@ -46,6 +46,31 @@ export interface ResolvedAdaptivePacingOptions {
   successThreshold: number;
 }
 
+export interface RequestBudgetOptions {
+  /** Enables bounded admission control and the protective circuit. Defaults to true. */
+  enabled?: boolean;
+
+  /** Maximum admitted HTTP requests, including the active request. Defaults to 100. */
+  maxPendingRequests?: number;
+
+  /** Maximum time an HTTP request may wait before starting. Defaults to 2 minutes. */
+  maxQueueWaitMs?: number;
+
+  /** Consecutive endpoint 429s required to open the circuit. Defaults to 3. */
+  circuitBreakerThreshold?: number;
+
+  /** How long an opened circuit rejects new work. Defaults to 5 minutes. */
+  circuitOpenMs?: number;
+}
+
+export interface ResolvedRequestBudgetOptions {
+  enabled: boolean;
+  maxPendingRequests: number;
+  maxQueueWaitMs: number;
+  circuitBreakerThreshold: number;
+  circuitOpenMs: number;
+}
+
 export interface RateLimitOptions {
   /** Enables serialized, spaced requests and shared cooldown handling. Defaults to true. */
   enabled?: boolean;
@@ -55,6 +80,9 @@ export interface RateLimitOptions {
 
   /** Response-aware pacing that backs off after 429s and recovers gradually. */
   adaptivePacing?: AdaptivePacingOptions;
+
+  /** Queue limits, maximum waiting time, and protective circuit breaking. */
+  requestBudget?: RequestBudgetOptions;
 
   /** Fallback cooldown when automatic recovery is disabled. Defaults to 60 seconds. */
   cooldownMs?: number;
@@ -76,6 +104,7 @@ export interface ResolvedRateLimitOptions {
   enabled: boolean;
   minIntervalMs: number;
   adaptivePacing: Readonly<ResolvedAdaptivePacingOptions>;
+  requestBudget: Readonly<ResolvedRequestBudgetOptions>;
   cooldownMs: number;
   recovery: boolean;
   recoveryDelaysMs: readonly number[];

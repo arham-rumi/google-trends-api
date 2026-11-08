@@ -9,12 +9,13 @@ export {
   InvalidResponseError,
   NetworkError,
   RateLimitError,
+  RequestBudgetExceededError,
   RequestAbortedError,
   RequestTimeoutError,
   WidgetNotFoundError,
 } from './errors.js';
 
-export type { GoogleTrendsErrorCode } from './errors.js';
+export type { GoogleTrendsErrorCode, RequestBudgetReason } from './errors.js';
 
 export { INTEREST_BY_REGION_RESOLUTIONS } from './google/interest-by-region.js';
 
@@ -81,10 +82,12 @@ export type {
   QueryPrimitive,
   QueryValue,
   RateLimitOptions,
+  RequestBudgetOptions,
   ResolvedAdaptivePacingOptions,
   ResolvedCacheCoordinationOptions,
   ResolvedCacheOptions,
   ResolvedGoogleTrendsClientOptions,
   ResolvedRateLimitOptions,
+  ResolvedRequestBudgetOptions,
   RetryOptions,
 } from './types.js';

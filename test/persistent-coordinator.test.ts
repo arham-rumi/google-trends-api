@@ -3,6 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { PersistentCoordinator } from '../src/rate-limit/persistent-coordinator.js';
 import { TestCoordinatedCacheStore } from './support/coordinated-cache-store.js';
 
+const requestBudget = {
+  enabled: true,
+  maxPendingRequests: 100,
+  maxQueueWaitMs: 1_000,
+  circuitBreakerThreshold: 3,
+  circuitOpenMs: 1_000,
+} as const;
+
 function createCoordinator(
   store: TestCoordinatedCacheStore,
   options: { lockTtlMs?: number; pollIntervalMs?: number } = {},
@@ -117,10 +125,16 @@ describe('PersistentCoordinator', () => {
         recoveryFactor: 0.5,
         successThreshold: 2,
       } as const;
-      const firstLease = await first.acquireRequestPacingLease(20, 20, adaptivePacing);
+      const firstLease = await first.acquireRequestPacingLease(
+        20,
+        20,
+        adaptivePacing,
+        requestBudget,
+        '/test',
+      );
       let secondLease: Awaited<ReturnType<typeof second.acquireRequestPacingLease>> | undefined;
       const secondLeasePromise = second
-        .acquireRequestPacingLease(20, 20, adaptivePacing)
+        .acquireRequestPacingLease(20, 20, adaptivePacing, requestBudget, '/test')
         .then((lease) => {
           secondLease = lease;
           return lease;
@@ -160,28 +174,122 @@ describe('PersistentCoordinator', () => {
         recoveryFactor: 0.5,
         successThreshold: 2,
       } as const;
-      const initial = await first.acquireRequestPacingLease(10, 10, adaptivePacing);
+      const initial = await first.acquireRequestPacingLease(
+        10,
+        10,
+        adaptivePacing,
+        requestBudget,
+        '/test',
+      );
 
       expect(initial.intervalMs).toBe(10);
       await initial.release('rate-limit');
 
-      const backedOffPromise = second.acquireRequestPacingLease(10, 10, adaptivePacing);
+      const backedOffPromise = second.acquireRequestPacingLease(
+        10,
+        10,
+        adaptivePacing,
+        requestBudget,
+        '/test',
+      );
       await vi.advanceTimersByTimeAsync(20);
       const backedOff = await backedOffPromise;
       expect(backedOff.intervalMs).toBe(20);
       await backedOff.release('success');
 
-      const firstRecoveryPromise = first.acquireRequestPacingLease(10, 10, adaptivePacing);
+      const firstRecoveryPromise = first.acquireRequestPacingLease(
+        10,
+        10,
+        adaptivePacing,
+        requestBudget,
+        '/test',
+      );
       await vi.advanceTimersByTimeAsync(20);
       const firstRecovery = await firstRecoveryPromise;
       expect(firstRecovery.intervalMs).toBe(20);
       await firstRecovery.release('success');
 
-      const recoveredPromise = second.acquireRequestPacingLease(10, 10, adaptivePacing);
+      const recoveredPromise = second.acquireRequestPacingLease(
+        10,
+        10,
+        adaptivePacing,
+        requestBudget,
+        '/test',
+      );
       await vi.advanceTimersByTimeAsync(20);
       const recovered = await recoveredPromise;
       expect(recovered.intervalMs).toBe(10);
       await recovered.release('success');
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('shares endpoint circuit state across coordinators', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-08T00:00:00.000Z'));
+
+    try {
+      const store = new TestCoordinatedCacheStore();
+      const first = createCoordinator(store, { lockTtlMs: 100, pollIntervalMs: 1 });
+      const second = createCoordinator(store, { lockTtlMs: 100, pollIntervalMs: 1 });
+      const adaptivePacing = {
+        enabled: false,
+        maxIntervalMs: 10,
+        increaseFactor: 2,
+        recoveryFactor: 0.5,
+        successThreshold: 2,
+      } as const;
+      const circuitBudget = {
+        ...requestBudget,
+        circuitBreakerThreshold: 2,
+        circuitOpenMs: 50,
+      } as const;
+      const firstFailure = await first.acquireRequestPacingLease(
+        0,
+        0,
+        adaptivePacing,
+        circuitBudget,
+        '/limited',
+      );
+      await firstFailure.release('rate-limit');
+      const secondFailure = await second.acquireRequestPacingLease(
+        0,
+        0,
+        adaptivePacing,
+        circuitBudget,
+        '/limited',
+      );
+      await secondFailure.release('rate-limit');
+
+      await expect(
+        first.acquireRequestPacingLease(0, 0, adaptivePacing, circuitBudget, '/limited'),
+      ).rejects.toMatchObject({
+        code: 'REQUEST_BUDGET_EXCEEDED',
+        reason: 'circuit-open',
+        retryAfterMs: 50,
+      });
+
+      const unrelated = await second.acquireRequestPacingLease(
+        0,
+        0,
+        adaptivePacing,
+        circuitBudget,
+        '/healthy',
+      );
+      await unrelated.release('success');
+
+      await vi.advanceTimersByTimeAsync(50);
+      const probe = await first.acquireRequestPacingLease(
+        0,
+        0,
+        adaptivePacing,
+        circuitBudget,
+        '/limited',
+      );
+      await probe.release('success');
+      expect(store.locks.size).toBe(0);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
