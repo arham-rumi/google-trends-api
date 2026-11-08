@@ -95,40 +95,48 @@ describe('RequestGovernor', () => {
   });
 
   it('keeps cooldowns and recovery counters isolated by endpoint', async () => {
-    const governor = new RequestGovernor(
-      resolveRateLimitOptions({
-        minIntervalMs: 0,
-        recoveryDelaysMs: [20, 100],
-      }),
-    );
-    const rejectFor = (path: string) =>
-      governor.execute(
-        async () => {
-          throw new RateLimitError({
-            url: `https://example.test${path}`,
-            responseBody: undefined,
-            retryAfterMs: undefined,
-          });
-        },
-        undefined,
-        path,
+    vi.useFakeTimers();
+
+    try {
+      const governor = new RequestGovernor(
+        resolveRateLimitOptions({
+          minIntervalMs: 0,
+          recoveryDelaysMs: [20, 100],
+        }),
       );
+      const rejectFor = (path: string) =>
+        governor.execute(
+          async () => {
+            throw new RateLimitError({
+              url: `https://example.test${path}`,
+              responseBody: undefined,
+              retryAfterMs: undefined,
+            });
+          },
+          undefined,
+          path,
+        );
 
-    await expect(rejectFor('/limited-a')).rejects.toBeInstanceOf(RateLimitError);
+      await expect(rejectFor('/limited-a')).rejects.toBeInstanceOf(RateLimitError);
 
-    expect(governor.getCooldownRemainingMs('/limited-a')).toBeGreaterThan(0);
-    expect(governor.getCooldownRemainingMs('/healthy')).toBe(0);
+      expect(governor.getCooldownRemainingMs('/limited-a')).toBeGreaterThan(0);
+      expect(governor.getCooldownRemainingMs('/healthy')).toBe(0);
 
-    await expect(governor.execute(async () => 'ok', undefined, '/healthy')).resolves.toBe('ok');
+      await expect(governor.execute(async () => 'ok', undefined, '/healthy')).resolves.toBe('ok');
 
-    expect(governor.getCooldownRemainingMs('/limited-a')).toBeGreaterThan(0);
+      expect(governor.getCooldownRemainingMs('/limited-a')).toBeGreaterThan(0);
 
-    await governor.waitForCooldown(undefined, '/limited-a');
-    await expect(rejectFor('/limited-a')).rejects.toBeInstanceOf(RateLimitError);
-    await expect(rejectFor('/limited-b')).rejects.toBeInstanceOf(RateLimitError);
+      const cooldown = governor.waitForCooldown(undefined, '/limited-a');
+      await vi.advanceTimersByTimeAsync(20);
+      await cooldown;
+      await expect(rejectFor('/limited-a')).rejects.toBeInstanceOf(RateLimitError);
+      await expect(rejectFor('/limited-b')).rejects.toBeInstanceOf(RateLimitError);
 
-    expect(governor.getCooldownRemainingMs('/limited-a')).toBeGreaterThan(60);
-    expect(governor.getCooldownRemainingMs('/limited-b')).toBeLessThanOrEqual(20);
+      expect(governor.getCooldownRemainingMs('/limited-a')).toBeGreaterThan(60);
+      expect(governor.getCooldownRemainingMs('/limited-b')).toBeLessThanOrEqual(20);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('preserves the request error when releasing a shared pacing lease also fails', async () => {

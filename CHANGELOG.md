@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Updated GitHub Actions and compatible development tooling, while retaining TypeScript 6 and
+  Node 24 typings until their surrounding toolchain and runtime matrix support the next majors.
+- Made the endpoint cooldown-isolation test deterministic with fake timers.
+
+### Security
+
+- Updated Vitest and transitive tooling dependencies, including a Node-compatible minimatch
+  override, so both production and development dependency audits report no vulnerabilities.
+
 ## [0.3.0] - 2026-11-08
 
 ### Added
