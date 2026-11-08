@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-08
+
 ### Added
 
 - Added typed `comparisonItems` inputs with per-item geography and time-range overrides for
@@ -67,7 +69,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added a real Redis 7.4 CI suite covering TTL expiry, atomic cross-connection leases, escaped
   namespace clearing, and end-to-end request coalescing between clients.
 
-## 0.2.4 - 2026-08-08
+## [0.2.4] - 2026-08-08
 
 ### Fixed
 
@@ -85,7 +87,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Verified package output against Google's raw responses for all supported
   Google Trends data endpoints.
 
-## 0.2.3 - 2026-08-07
+## [0.2.3] - 2026-08-07
 
 - Added deep live validation for Interest Over Time.
 - Added `npm run verify:interest-live`.
@@ -148,7 +150,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Packed-package consumer tests for both ESM and CommonJS.
 - Tag-based npm publishing workflow prepared for Trusted Publishing.
 
-[Unreleased]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/arham-rumi/google-trends-api/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.4...v0.3.0
+[0.2.4]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/arham-rumi/google-trends-api/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/arham-rumi/google-trends-api/compare/v0.1.0...v0.2.0

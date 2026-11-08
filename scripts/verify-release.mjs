@@ -3,7 +3,6 @@ import { appendFile, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import process from 'node:process';
 
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const projectRoot = resolve(import.meta.dirname, '..');
 const packageJson = JSON.parse(await readFile(resolve(projectRoot, 'package.json'), 'utf8'));
 
@@ -17,7 +16,15 @@ if (currentTag !== undefined && currentTag !== expectedTag) {
 }
 
 const packageSpecifier = `${packageJson.name}@${packageJson.version}`;
-const lookup = spawnSync(npmCommand, ['view', packageSpecifier, 'version', '--json'], {
+if (!/^[A-Za-z0-9@/._+-]+$/.test(packageSpecifier)) {
+  throw new Error(`Unsafe npm package specifier: ${packageSpecifier}`);
+}
+
+const npmArguments = ['view', packageSpecifier, 'version', '--json'];
+const command = process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : 'npm';
+const commandArguments =
+  process.platform === 'win32' ? ['/d', '/s', '/c', `npm ${npmArguments.join(' ')}`] : npmArguments;
+const lookup = spawnSync(command, commandArguments, {
   cwd: projectRoot,
   encoding: 'utf8',
   stdio: 'pipe',
@@ -25,11 +32,15 @@ const lookup = spawnSync(npmCommand, ['view', packageSpecifier, 'version', '--js
 
 let alreadyPublished = false;
 
+if (lookup.error !== undefined) {
+  throw new Error(`Unable to run npm for ${packageSpecifier}.`, { cause: lookup.error });
+}
+
 if (lookup.status === 0) {
   const publishedVersion = JSON.parse(lookup.stdout.trim());
   alreadyPublished = publishedVersion === packageJson.version;
 } else {
-  const errorOutput = `${lookup.stdout}\n${lookup.stderr}`;
+  const errorOutput = `${lookup.stdout ?? ''}\n${lookup.stderr ?? ''}`;
 
   if (!/E404|404 Not Found|is not in this registry/i.test(errorOutput)) {
     throw new Error(`Unable to check npm for ${packageSpecifier}.\n${errorOutput.trim()}`);

@@ -1,6 +1,6 @@
 {
   "name": "@arham-rumi/google-trends-api",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Modern, typed, unofficial Google Trends client for Node.js.",
   "type": "module",
   "license": "MIT",
