@@ -20,6 +20,7 @@ trends, and Google Trends autocomplete suggestions without driving a browser.
 - [API at a glance](#api-at-a-glance)
 - [Terms, topics, and comparison inputs](#terms-topics-and-comparison-inputs)
 - [API guide](#api-guide)
+- [Bulk workloads](#bulk-workloads)
 - [Client configuration](#client-configuration)
 - [Caching, deduplication, and rate limits](#caching-deduplication-and-rate-limits)
 - [Observability](#observability)
@@ -44,6 +45,7 @@ trends, and Google Trends autocomplete suggestions without driving a browser.
 - Typed errors for HTTP, rate-limit, timeout, cancellation, network, and parsing failures
 - Conservative request serialization and spacing
 - Identical-request deduplication and per-client in-memory caching
+- Bounded bulk workloads with ordered results, progress, cancellation, and duplicate coalescing
 - Endpoint-specific HTTP 429 cooldowns and stale-cache fallback
 - Deterministic tests plus separate live validators that compare parsed output with raw Google data
 
@@ -85,19 +87,20 @@ time range.
 
 ## API at a glance
 
-| Method                | Use it for                                          | Main result                        |
-| --------------------- | --------------------------------------------------- | ---------------------------------- |
-| `interestOverTime()`  | Relative interest across a timeline                 | Timeline points and averages       |
-| `interestByRegion()`  | Relative interest by geographic area                | Ranked geographic rows             |
-| `relatedQueries()`    | Searches associated with each term or topic         | Top and rising query lists         |
-| `relatedTopics()`     | Topics associated with each term or topic           | Top and rising topic lists         |
-| `trendingNow()`       | Searches currently surging in a country/territory   | RSS trends and related news        |
-| `autocomplete()`      | Search-term suggestions and topic machine IDs       | Terms and topics                   |
-| `warmup()`            | Explicitly establish the cookie-aware session       | `Promise<void>`                    |
-| `clearCache()`        | Remove results from the memory and persistent cache | `Promise<void>`                    |
-| `getMetrics()`        | Snapshot counters and live request/cache gauges     | Immutable metrics object           |
-| `resetMetrics()`      | Reset cumulative counters                           | `void`                             |
-| `getResultMetadata()` | Identify network, fresh-cache, or stale-cache data  | Source, stale flag, and cache time |
+| Method                | Use it for                                            | Main result                        |
+| --------------------- | ----------------------------------------------------- | ---------------------------------- |
+| `interestOverTime()`  | Relative interest across a timeline                   | Timeline points and averages       |
+| `interestByRegion()`  | Relative interest by geographic area                  | Ranked geographic rows             |
+| `relatedQueries()`    | Searches associated with each term or topic           | Top and rising query lists         |
+| `relatedTopics()`     | Topics associated with each term or topic             | Top and rising topic lists         |
+| `trendingNow()`       | Searches currently surging in a country/territory     | RSS trends and related news        |
+| `autocomplete()`      | Search-term suggestions and topic machine IDs         | Terms and topics                   |
+| `batch()`             | Run many high-level operations without request bursts | Ordered settled results            |
+| `warmup()`            | Explicitly establish the cookie-aware session         | `Promise<void>`                    |
+| `clearCache()`        | Remove results from the memory and persistent cache   | `Promise<void>`                    |
+| `getMetrics()`        | Snapshot counters and live request/cache gauges       | Immutable metrics object           |
+| `resetMetrics()`      | Reset cumulative counters                             | `void`                             |
+| `getResultMetadata()` | Identify network, fresh-cache, or stale-cache data    | Source, stale flag, and cache time |
 
 All public request methods support `AbortSignal`. Explore-based methods accept either the concise
 `keywords` form or explicit `comparisonItems`.
@@ -370,6 +373,62 @@ console.log(GOOGLE_TRENDS_PROPERTIES);
 | `'news'`    | News Search     |
 | `'youtube'` | YouTube Search  |
 | `'froogle'` | Google Shopping |
+
+## Bulk workloads
+
+Use `batch()` when an application needs to run the same Trends operation for many inputs. It limits
+the number of active high-level operations and returns one settled result for every input, in the
+original order:
+
+```ts
+const keywords = ['typescript', 'react', 'typescript', 'node.js'];
+
+const results = await trends.batch(
+  keywords,
+  (keyword, { signal }) =>
+    trends.interestOverTime({
+      keywords: keyword,
+      geo: 'US',
+      timeRange: 'today 3-m',
+      signal,
+    }),
+  {
+    concurrency: 1,
+    deduplicateBy: (keyword) => keyword.trim().toLowerCase(),
+    onProgress: ({ completed, total, status }) => {
+      console.log(`${completed}/${total}: ${status}`);
+    },
+  },
+);
+
+for (const result of results) {
+  if (result.status === 'fulfilled') {
+    console.log(result.value.timeline.length);
+  } else {
+    console.error(result.reason);
+  }
+}
+```
+
+| Batch option    | Default     | Description                                                      |
+| --------------- | ----------- | ---------------------------------------------------------------- |
+| `concurrency`   | `1`         | Maximum active worker executions                                 |
+| `signal`        | `undefined` | Shared cancellation signal                                       |
+| `deduplicateBy` | `undefined` | Returns a string or number key for semantically identical inputs |
+| `onProgress`    | `undefined` | Receives an immutable event after each original input is settled |
+
+The default concurrency of `1` is the safest choice for Google Trends. Increasing it does not
+bypass the client's HTTP pacing, cooldown, request-budget, or circuit-breaker protections; it only
+allows multiple high-level operations to be active, which can help when results are already cached.
+
+Pass the worker's `signal` to the Trends request so active work can stop when the batch signal is
+aborted. Pending inputs are rejected with the abort reason without starting their workers. A worker
+failure rejects only its own settled entry and does not stop the rest of the batch. Exceptions from
+`deduplicateBy` reject that input; exceptions from `onProgress` are ignored.
+
+When `deduplicateBy` returns the same key for several inputs, the worker runs once using the first
+input and index. Every original position still receives a result and progress event; duplicate
+fulfilled entries reference the same worker return value, so treat that value as read-only.
 
 ## Client configuration
 

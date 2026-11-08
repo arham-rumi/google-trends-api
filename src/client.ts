@@ -1,5 +1,6 @@
 import { ResultCache } from './cache/result-cache.js';
 import type { CacheLookup, ResolvedCacheOptions } from './cache/types.js';
+import { executeBatch, type BatchOptions, type BatchResult, type BatchWorker } from './batch.js';
 import {
   HttpStatusError,
   InvalidResponseError,
@@ -306,6 +307,15 @@ export class GoogleTrendsClient {
 
   public clearCache(): Promise<void> {
     return this.#cache.clear();
+  }
+
+  /** Runs a bounded, ordered batch and returns one settled result per input. */
+  public batch<TInput, TOutput>(
+    inputs: readonly TInput[],
+    worker: BatchWorker<TInput, TOutput>,
+    options: BatchOptions<TInput> = {},
+  ): Promise<readonly BatchResult<TOutput>[]> {
+    return executeBatch(inputs, worker, options);
   }
 
   #createWarmupOptions(signal?: AbortSignal): HttpSessionWarmupOptions {

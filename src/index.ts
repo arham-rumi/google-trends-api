@@ -1,5 +1,16 @@
 export { GoogleTrendsClient, createClient } from './client.js';
 
+export type {
+  BatchDeduplicationKey,
+  BatchFulfilledResult,
+  BatchOptions,
+  BatchProgress,
+  BatchRejectedResult,
+  BatchResult,
+  BatchWorker,
+  BatchWorkerContext,
+} from './batch.js';
+
 export { getResultMetadata } from './result-metadata.js';
 export type { ResultMetadata, ResultSource } from './result-metadata.js';
 

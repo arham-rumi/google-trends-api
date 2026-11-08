@@ -38,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added `createRedisCacheStore()` with binary-safe persistent caching, incremental namespace
   clearing, and atomic owner-checked coordination leases for node-redis, ioredis, and compatible
   command executors.
+- Added typed `client.batch()` workloads with bounded concurrency, ordered settled results,
+  duplicate-key coalescing, shared cancellation, and isolated progress reporting.
 
 ### Changed
 
@@ -60,6 +62,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   coverage.
 - Added deterministic Redis adapter coverage for binary payloads, TTLs, atomic lock scripts,
   namespace scans, bounded deletion, and invalid responses.
+- Added deterministic bulk-workload coverage for concurrency bounds, ordering, failures,
+  deduplication, progress, cancellation, immutability, and callback isolation.
 
 ## 0.2.4 - 2026-08-08
 
