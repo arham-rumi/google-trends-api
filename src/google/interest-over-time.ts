@@ -5,27 +5,24 @@ import {
   DEFAULT_INTEREST_OVER_TIME_RANGE,
   GOOGLE_INTEREST_OVER_TIME_PATH,
   GOOGLE_WIDGET_IDS,
-  MAX_EXPLORE_COMPARISON_ITEMS,
   type GoogleTrendsProperty,
 } from './constants.js';
 import {
+  buildExploreComparisonItems,
   fetchExploreWidgets,
   findExploreWidget,
   type ExploreComparisonItemInput,
+  type GoogleTrendsComparisonInput,
 } from './explore.js';
 import { parseGoogleResponse } from './parser.js';
 
-export interface InterestOverTimeOptions {
-  /** One keyword or up to five keywords to compare. */
-  keywords: string | readonly string[];
-  /** Google Trends geo code, for example "US" or "PK". */
-  geo?: string;
-  /** Google Trends time expression, for example "today 12-m" or "now 7-d". */
-  timeRange?: string;
+export interface InterestOverTimeSettings {
   category?: number;
   property?: GoogleTrendsProperty;
   signal?: AbortSignal;
 }
+
+export type InterestOverTimeOptions = GoogleTrendsComparisonInput & InterestOverTimeSettings;
 
 export interface InterestOverTimeValue {
   keyword: string;
@@ -54,10 +51,10 @@ export interface InterestOverTimeResult {
   averages: InterestOverTimeAverage[];
 }
 
-export interface FetchInterestOverTimeOptions extends InterestOverTimeOptions {
+export type FetchInterestOverTimeOptions = InterestOverTimeOptions & {
   locale: string;
   timezone: number;
-}
+};
 
 interface TimelineApiResponse {
   default: unknown;
@@ -65,16 +62,6 @@ interface TimelineApiResponse {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function requireNonEmptyString(value: string, fieldName: string): string {
-  const normalized = value.trim();
-
-  if (normalized.length === 0) {
-    throw new RangeError(`${fieldName} cannot be empty.`);
-  }
-
-  return normalized;
 }
 
 function parseOptionalString(value: unknown): string | undefined {
@@ -210,25 +197,7 @@ function parseTimelinePoint(
 export function buildInterestOverTimeComparisonItems(
   input: InterestOverTimeOptions,
 ): ExploreComparisonItemInput[] {
-  const rawKeywords = Array.isArray(input.keywords) ? input.keywords : [input.keywords];
-
-  if (rawKeywords.length === 0 || rawKeywords.length > MAX_EXPLORE_COMPARISON_ITEMS) {
-    throw new RangeError(
-      `keywords must contain between 1 and ${MAX_EXPLORE_COMPARISON_ITEMS} items.`,
-    );
-  }
-
-  const timeRange = requireNonEmptyString(
-    input.timeRange ?? DEFAULT_INTEREST_OVER_TIME_RANGE,
-    'timeRange',
-  );
-  const geo = input.geo?.trim() ?? '';
-
-  return rawKeywords.map((keyword, index) => ({
-    keyword: requireNonEmptyString(keyword, `keywords[${index}]`),
-    geo,
-    time: timeRange,
-  }));
+  return buildExploreComparisonItems(input, DEFAULT_INTEREST_OVER_TIME_RANGE);
 }
 
 export function parseInterestOverTimeResponse(

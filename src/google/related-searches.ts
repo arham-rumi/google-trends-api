@@ -6,28 +6,25 @@ import {
   GOOGLE_EXPLORE_PATH,
   GOOGLE_RELATED_SEARCHES_PATH,
   GOOGLE_WIDGET_IDS,
-  MAX_EXPLORE_COMPARISON_ITEMS,
   type GoogleTrendsProperty,
   type GoogleWidgetId,
 } from './constants.js';
 import {
+  buildExploreComparisonItems,
   fetchExploreWidgets,
   type ExploreComparisonItemInput,
   type ExploreWidget,
+  type GoogleTrendsComparisonInput,
 } from './explore.js';
 import { parseGoogleResponse } from './parser.js';
 
-export interface RelatedSearchesOptions {
-  /** One keyword or up to five keywords. */
-  keywords: string | readonly string[];
-  /** Google Trends geo code, for example "US" or "PK". */
-  geo?: string;
-  /** Google Trends time expression, for example "today 12-m" or "now 7-d". */
-  timeRange?: string;
+export interface RelatedSearchesSettings {
   category?: number;
   property?: GoogleTrendsProperty;
   signal?: AbortSignal;
 }
+
+export type RelatedSearchesOptions = GoogleTrendsComparisonInput & RelatedSearchesSettings;
 
 export interface RelatedQueryItem {
   query: string;
@@ -61,10 +58,10 @@ export interface RelatedTopicsResult {
   rising: RelatedTopicItem[];
 }
 
-interface FetchRelatedSearchesOptions extends RelatedSearchesOptions {
+type FetchRelatedSearchesOptions = RelatedSearchesOptions & {
   locale: string;
   timezone: number;
-}
+};
 
 interface RankedLists<T> {
   top: T[];
@@ -78,16 +75,6 @@ interface WidgetKeywordPair {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function requireNonEmptyString(value: string, fieldName: string): string {
-  const normalized = value.trim();
-
-  if (normalized.length === 0) {
-    throw new RangeError(`${fieldName} cannot be empty.`);
-  }
-
-  return normalized;
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -105,25 +92,7 @@ function finiteNumber(value: unknown, fieldName: string, url: string): number {
 export function buildRelatedSearchComparisonItems(
   input: RelatedSearchesOptions,
 ): ExploreComparisonItemInput[] {
-  const rawKeywords = Array.isArray(input.keywords) ? input.keywords : [input.keywords];
-
-  if (rawKeywords.length === 0 || rawKeywords.length > MAX_EXPLORE_COMPARISON_ITEMS) {
-    throw new RangeError(
-      `keywords must contain between 1 and ${MAX_EXPLORE_COMPARISON_ITEMS} items.`,
-    );
-  }
-
-  const timeRange = requireNonEmptyString(
-    input.timeRange ?? DEFAULT_RELATED_SEARCHES_RANGE,
-    'timeRange',
-  );
-  const geo = input.geo?.trim() ?? '';
-
-  return rawKeywords.map((keyword, index) => ({
-    keyword: requireNonEmptyString(keyword, `keywords[${index}]`),
-    geo,
-    time: timeRange,
-  }));
+  return buildExploreComparisonItems(input, DEFAULT_RELATED_SEARCHES_RANGE);
 }
 
 function parseRankedList<T>(

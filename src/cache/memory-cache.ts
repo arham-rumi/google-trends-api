@@ -1,5 +1,10 @@
 import type { CacheLookup, ResolvedCacheOptions } from './types.js';
 
+type MemoryCacheOptions = Pick<
+  ResolvedCacheOptions,
+  'enabled' | 'ttlMs' | 'staleIfErrorMs' | 'maxEntries'
+>;
+
 interface StoredCacheEntry {
   value: unknown;
   cachedAt: number;
@@ -13,9 +18,9 @@ function cloneValue<T>(value: T): T {
 
 export class MemoryCache {
   readonly #entries = new Map<string, StoredCacheEntry>();
-  readonly #options: Readonly<ResolvedCacheOptions>;
+  readonly #options: Readonly<MemoryCacheOptions>;
 
-  public constructor(options: ResolvedCacheOptions) {
+  public constructor(options: MemoryCacheOptions) {
     this.#options = options;
   }
 

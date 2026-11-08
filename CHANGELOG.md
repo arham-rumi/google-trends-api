@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added typed `comparisonItems` inputs with per-item geography and time-range overrides for
+  interest over time, interest by region, related queries, and related topics.
+- Preserved the existing `keywords`, `geo`, and `timeRange` shorthand as a mutually exclusive,
+  backward-compatible input form.
+- Added a pluggable `CacheStore` interface for sharing completed results across client instances,
+  processes, and serverless invocations while retaining the bounded in-memory L1 cache.
+- Added versioned opaque serialization, persistent TTL handling, prefix-scoped clearing, and
+  fixed-length hashed cache keys. Cached `Date` values and result-cloning behavior are preserved.
+
+### Changed
+
+- `clearCache()` now returns `Promise<void>` and clears both the in-memory cache and the configured
+  persistent-cache namespace. Existing calls remain valid, but should be awaited when a persistent
+  store is configured.
+
+### Testing
+
+- Extended deep Interest Over Time verification to compare per-item geography requests and package
+  output directly against Google's raw response without adding extra live requests.
+
 ## 0.2.4 - 2026-08-08
 
 ### Fixed

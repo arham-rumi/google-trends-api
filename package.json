@@ -50,7 +50,9 @@
     "verify:related-queries-live": "npm run build && node scripts/verify-related-queries-live.mjs",
     "verify:related-topics-live": "npm run build && node scripts/verify-related-topics-live.mjs",
     "verify:trending-live": "npm run build && node scripts/verify-trending-now-live.mjs",
-    "verify:autocomplete-live": "npm run build && node scripts/verify-autocomplete-live.mjs"
+    "verify:autocomplete-live": "npm run build && node scripts/verify-autocomplete-live.mjs",
+    "verify:live": "npm run build && node scripts/verify-live.mjs",
+    "verify:published": "node scripts/verify-published.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",

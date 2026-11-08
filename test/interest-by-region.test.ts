@@ -40,6 +40,21 @@ describe('interestByRegion', () => {
     ]);
   });
 
+  it('supports per-comparison geography and time ranges', () => {
+    expect(
+      buildInterestByRegionComparisonItems({
+        comparisonItems: [
+          { keyword: ' TypeScript ', geo: ' US ' },
+          { keyword: ' JavaScript ', geo: ' GB ', timeRange: ' now 7-d ' },
+        ],
+        timeRange: 'today 3-m',
+      }),
+    ).toEqual([
+      { keyword: 'TypeScript', geo: 'US', time: 'today 3-m' },
+      { keyword: 'JavaScript', geo: 'GB', time: 'now 7-d' },
+    ]);
+  });
+
   it('parses geo codes, coordinates, and keyword values', () => {
     const result = parseInterestByRegionResponse(
       {

@@ -5,30 +5,57 @@
 
 A modern, typed, unofficial Google Trends client for Node.js.
 
-> This package is not affiliated with, maintained by, or endorsed by Google.
-> It uses endpoints that Google may change without notice.
+Use it to retrieve interest over time, geographic interest, related queries and topics, current
+trends, and Google Trends autocomplete suggestions without driving a browser.
 
-## Features
+> **Important:** This package is not affiliated with, maintained by, or endorsed by Google. It uses
+> undocumented Google Trends web endpoints that can change without notice. Build applications to
+> tolerate rate limits, temporary failures, and response changes.
 
-- TypeScript-first API with generated declarations
+## Contents
+
+- [Why use this package?](#why-use-this-package)
+- [Requirements and installation](#requirements-and-installation)
+- [Quick start](#quick-start)
+- [API at a glance](#api-at-a-glance)
+- [Terms, topics, and comparison inputs](#terms-topics-and-comparison-inputs)
+- [API guide](#api-guide)
+- [Client configuration](#client-configuration)
+- [Caching, deduplication, and rate limits](#caching-deduplication-and-rate-limits)
+- [Cancellation](#cancellation)
+- [Error handling](#error-handling)
+- [CommonJS](#commonjs)
+- [Production guidance](#production-guidance)
+- [Development and verification](#development-and-verification)
+- [Limitations and responsible use](#limitations-and-responsible-use)
+- [Collaboration and contact](#collaboration-and-contact)
+
+## Why use this package?
+
+- TypeScript-first public API with generated declarations
 - ESM and CommonJS builds
 - Interest over time for up to five terms or topics
 - Interest by country, region, city, or DMA
-- Related queries and related topics
-- Trending Now RSS data
-- Search-term and topic autocomplete
-- Cookie-aware sessions, timeouts, retries, abort signals, and typed errors
-- Lazy session warm-up, serialized requests, deduplication, caching, and 429 cooldowns
+- Top and rising related queries and topics
+- Trending Now RSS results, including news items when Google provides them
+- Search-term and Knowledge Graph topic autocomplete
+- Cookie-aware HTTP sessions, timeouts, retry handling, and abort signals
+- Typed errors for HTTP, rate-limit, timeout, cancellation, network, and parsing failures
+- Conservative request serialization and spacing
+- Identical-request deduplication and per-client in-memory caching
+- Endpoint-specific HTTP 429 cooldowns and stale-cache fallback
+- Deterministic tests plus separate live validators that compare parsed output with raw Google data
 
-## Requirements
+## Requirements and installation
 
 - Node.js 22.14.0 or newer
-
-## Installation
+- No API key is required
 
 ```bash
 npm install @arham-rumi/google-trends-api
 ```
+
+The package uses the native Node.js `fetch` implementation by default.
 
 ## Quick start
 
@@ -37,8 +64,7 @@ import { createClient } from '@arham-rumi/google-trends-api';
 
 const trends = createClient({
   locale: 'en-US',
-  timeoutMs: 15_000,
-  retries: 2,
+  timezone: 0,
 });
 
 const result = await trends.interestOverTime({
@@ -52,24 +78,295 @@ for (const point of result.timeline) {
 }
 ```
 
-Google Trends values are normalized relative scores, usually from `0` to `100`. They are not absolute search volumes.
+Google Trends values are relative scores, normally from `0` to `100`. They are not absolute search
+volumes. A value of `100` marks peak popularity within the requested comparison, geography, and
+time range.
 
-## Rate-limit protection and cache metadata
+## API at a glance
 
-By default, the client serializes requests, spaces them by 2.5 seconds, deduplicates identical concurrent calls, and caches successful results for 15 minutes. HTTP 429 responses are never retried immediately. When a stale cached result is available, it is returned during the shared cooldown.
+| Method                | Use it for                                          | Main result                        |
+| --------------------- | --------------------------------------------------- | ---------------------------------- |
+| `interestOverTime()`  | Relative interest across a timeline                 | Timeline points and averages       |
+| `interestByRegion()`  | Relative interest by geographic area                | Ranked geographic rows             |
+| `relatedQueries()`    | Searches associated with each term or topic         | Top and rising query lists         |
+| `relatedTopics()`     | Topics associated with each term or topic           | Top and rising topic lists         |
+| `trendingNow()`       | Searches currently surging in a country/territory   | RSS trends and related news        |
+| `autocomplete()`      | Search-term suggestions and topic machine IDs       | Terms and topics                   |
+| `warmup()`            | Explicitly establish the cookie-aware session       | `Promise<void>`                    |
+| `clearCache()`        | Remove results from the memory and persistent cache | `Promise<void>`                    |
+| `getResultMetadata()` | Identify network, fresh-cache, or stale-cache data  | Source, stale flag, and cache time |
+
+All public request methods support `AbortSignal`. Explore-based methods accept either the concise
+`keywords` form or explicit `comparisonItems`.
+
+## Terms, topics, and comparison inputs
+
+### Search terms versus topics
+
+A search term is the literal text people searched for. A topic is a Google Knowledge Graph entity
+that can combine languages and related spellings around one concept.
+
+Use `autocomplete()` when you want to discover the correct topic ID:
 
 ```ts
-import { getResultMetadata } from '@arham-rumi/google-trends-api';
+const suggestions = await trends.autocomplete({
+  keyword: 'tesla',
+  limit: 10,
+});
 
-const result = await trends.interestOverTime({ keywords: 'node.js' });
-console.log(getResultMetadata(result));
-// { source: 'network' | 'cache' | 'stale-cache', stale: boolean, cachedAt?: Date }
+for (const suggestion of suggestions.suggestions) {
+  console.log({
+    title: suggestion.title,
+    kind: suggestion.kind,
+    keyword: suggestion.keyword,
+    mid: suggestion.mid,
+  });
+}
 
-trends.clearCache();
-console.log(trends.cooldownRemainingMs);
+const topic = suggestions.suggestions.find((item) => item.kind === 'topic');
+
+if (topic) {
+  const result = await trends.interestOverTime({
+    keywords: topic.keyword,
+    geo: 'US',
+  });
+
+  console.log(result.timeline);
+}
 ```
 
-The cache is per client instance and stored in memory. It does not bypass Google limits; it reduces avoidable requests and keeps applications useful during temporary 429 periods.
+For topic suggestions, `suggestion.keyword` is the machine ID to pass to the Explore-based methods.
+
+### Shared filters with `keywords`
+
+Use `keywords` when all series share the same geography and time range:
+
+```ts
+const result = await trends.interestOverTime({
+  keywords: ['typescript', 'javascript'],
+  geo: 'US',
+  timeRange: 'today 3-m',
+});
+```
+
+`keywords` accepts one string or an array of one to five strings.
+
+### Per-series filters with `comparisonItems`
+
+Use `comparisonItems` to compare locations or time periods. Operation-level `geo` and `timeRange`
+values are defaults; an item can override either value.
+
+```ts
+const result = await trends.interestOverTime({
+  comparisonItems: [
+    { keyword: 'typescript', geo: 'US' },
+    { keyword: 'typescript', geo: 'GB', timeRange: 'now 7-d' },
+  ],
+  timeRange: 'today 3-m',
+});
+
+console.log(result.timeline);
+```
+
+`keywords` and `comparisonItems` are mutually exclusive. `comparisonItems` accepts one to five
+items and is supported by:
+
+- `interestOverTime()`
+- `interestByRegion()`
+- `relatedQueries()`
+- `relatedTopics()`
+
+Results preserve the input order, including when the same keyword is compared with different
+filters.
+
+### Common Explore filters
+
+| Option      | Meaning                                                                     |
+| ----------- | --------------------------------------------------------------------------- |
+| `geo`       | Google Trends geography, such as `US`, `PK`, or `US-CA`; omit for worldwide |
+| `timeRange` | Google Trends time expression, such as `now 7-d` or `today 12-m`            |
+| `category`  | Numeric Google Trends category ID; `0` means all categories                 |
+| `property`  | Search surface: web, images, news, YouTube, or Shopping                     |
+| `signal`    | `AbortSignal` used to cancel this caller's request                          |
+
+These endpoints follow Google Trends conventions. Data availability and supported geography/time
+combinations depend on Google. The package validates that a time range is non-empty but otherwise
+passes it through to Google. Common values include `now 7-d`, `today 3-m`, and `today 12-m`.
+Geography codes are also Google-defined; use an empty or omitted `geo` for worldwide data.
+
+## API guide
+
+### Interest over time
+
+```ts
+const result = await trends.interestOverTime({
+  keywords: ['typescript', 'javascript'],
+  geo: 'PK',
+  timeRange: 'now 7-d',
+  category: 0,
+  property: '',
+});
+
+for (const point of result.timeline) {
+  console.log({
+    timestamp: point.timestamp,
+    date: point.date,
+    label: point.formattedTime,
+    partial: point.isPartial,
+    values: point.values,
+  });
+}
+
+console.log(result.averages);
+```
+
+Each timeline value contains:
+
+- `keyword`: the corresponding input term or topic ID
+- `value`: Google's normalized numeric value
+- `hasData`: whether Google marked the series as having data at that point
+- `formattedValue`: Google's display-ready value
+
+`date` is a JavaScript `Date`; `timestamp` is Google's Unix timestamp in seconds. The latest point
+may have `isPartial: true`. Google can omit averages for a valid response, so `averages` may be an
+empty array.
+
+### Interest by region
+
+```ts
+import { INTEREST_BY_REGION_RESOLUTIONS, createClient } from '@arham-rumi/google-trends-api';
+
+console.log(INTEREST_BY_REGION_RESOLUTIONS);
+// ['COUNTRY', 'REGION', 'CITY', 'DMA']
+
+const result = await trends.interestByRegion({
+  keywords: 'artificial intelligence',
+  geo: 'US',
+  timeRange: 'today 12-m',
+  resolution: 'REGION',
+  includeLowSearchVolumeGeos: true,
+});
+
+for (const region of result.regions) {
+  console.log(region.geoName, region.geoCode, region.values);
+}
+```
+
+Supported resolution names are `COUNTRY`, `REGION`, `CITY`, and `DMA`. Google does not make every
+resolution available for every geography. A row may include `geoCode`, coordinates, and
+`maxValueIndex` when those fields are present in Google's response.
+
+For multi-keyword regional comparisons, values can be percentage shares between the compared
+series. Do not assume that one regional value must equal `100`.
+
+### Related queries
+
+```ts
+const results = await trends.relatedQueries({
+  keywords: ['node.js', 'bun'],
+  geo: 'US',
+  timeRange: 'today 3-m',
+});
+
+for (const result of results) {
+  console.log(`Related to ${result.keyword}`);
+
+  for (const item of result.top) {
+    console.log('top', item.query, item.value, item.formattedValue);
+  }
+
+  for (const item of result.rising) {
+    console.log('rising', item.query, item.value, item.formattedValue);
+  }
+}
+```
+
+Each input produces one result containing `top` and `rising` lists. Rising results may have a
+display value such as `Breakout`; use `formattedValue` when presenting Google's label.
+
+### Related topics
+
+```ts
+const results = await trends.relatedTopics({
+  keywords: 'machine learning',
+  geo: 'US',
+});
+
+for (const item of results[0]?.top ?? []) {
+  console.log(item.topic.title, item.topic.mid, item.topic.type);
+}
+
+console.log(results[0]?.rising);
+```
+
+Related topics have a title and may include a Knowledge Graph machine ID and type. Empty `top` or
+`rising` lists are valid when Google returns no rows; they do not necessarily indicate a parsing
+failure.
+
+### Trending Now
+
+```ts
+const result = await trends.trendingNow({
+  geo: 'PK',
+  limit: 10,
+});
+
+for (const trend of result.trends) {
+  console.log({
+    title: trend.title,
+    traffic: trend.approxTraffic,
+    minimumTraffic: trend.approxTrafficMin,
+    publishedAt: trend.publishedAt,
+    link: trend.link,
+    news: trend.news,
+  });
+}
+```
+
+`geo` must be a two-letter country or territory code. `limit`, when supplied, must be a positive
+integer.
+
+This method reads Google's Trending Now RSS feed. It returns the fields present in that feed, not
+every filter and chart shown in the interactive Trending Now website. `approxTrafficMin` is a
+parsed lower bound when the traffic label is recognizable; keep `approxTraffic` when displaying
+Google's original text.
+
+### Autocomplete
+
+```ts
+const result = await trends.autocomplete({
+  keyword: 'tesla',
+  limit: 10,
+});
+
+for (const suggestion of result.suggestions) {
+  console.log(
+    suggestion.kind, // 'search-term' | 'topic'
+    suggestion.title,
+    suggestion.type,
+    suggestion.keyword,
+  );
+}
+```
+
+Autocomplete returns both literal search terms and topics. Topic suggestions normally contain a
+`mid`, while `keyword` always contains the value accepted by other package methods.
+
+### Search properties
+
+```ts
+import { GOOGLE_TRENDS_PROPERTIES } from '@arham-rumi/google-trends-api';
+
+console.log(GOOGLE_TRENDS_PROPERTIES);
+```
+
+| Value       | Search surface  |
+| ----------- | --------------- |
+| `''`        | Web Search      |
+| `'images'`  | Image Search    |
+| `'news'`    | News Search     |
+| `'youtube'` | YouTube Search  |
+| `'froogle'` | Google Shopping |
 
 ## Client configuration
 
@@ -81,10 +378,13 @@ const trends = createClient({
   retries: 2,
   userAgent: 'my-app/1.0 (+https://example.com)',
   rateLimit: {
+    enabled: true,
     minIntervalMs: 2_500,
     cooldownMs: 60_000,
+    recovery: true,
   },
   cache: {
+    enabled: true,
     ttlMs: 15 * 60_000,
     staleIfErrorMs: 24 * 60 * 60_000,
     maxEntries: 100,
@@ -92,126 +392,150 @@ const trends = createClient({
 });
 ```
 
-| Option      | Default         | Description                                         |
-| ----------- | --------------- | --------------------------------------------------- |
-| `locale`    | `en-US`         | Locale sent to Google Trends.                       |
-| `timezone`  | `0`             | Google Trends timezone offset in minutes.           |
-| `timeoutMs` | `10000`         | Timeout for each HTTP attempt.                      |
-| `retries`   | `2`             | Additional attempts for temporary non-429 failures. |
-| `userAgent` | Package default | User agent sent with requests.                      |
-| `rateLimit` | See below       | Request spacing and shared HTTP 429 cooldown.       |
-| `cache`     | See below       | Fresh and stale in-memory result caching.           |
-| `fetch`     | Native `fetch`  | Optional custom fetch implementation.               |
+### Top-level options
 
-## Interest over time
+| Option      | Default         | Description                                             |
+| ----------- | --------------- | ------------------------------------------------------- |
+| `locale`    | `'en-US'`       | Locale sent to Google Trends                            |
+| `timezone`  | `0`             | Google Trends timezone offset in minutes (`-840`–`840`) |
+| `timeoutMs` | `10000`         | Timeout for each HTTP attempt                           |
+| `retries`   | `2`             | Additional attempts for retryable non-429 failures      |
+| `userAgent` | Package default | User agent sent to Google                               |
+| `rateLimit` | See below       | Request spacing, cooldown, and tokenized-flow recovery  |
+| `cache`     | See below       | In-memory cache with an optional persistent store       |
+| `fetch`     | Native `fetch`  | Custom fetch-compatible implementation                  |
+
+`client.options` exposes the resolved, read-only configuration.
+
+### Rate-limit options
+
+| Option             | Default                                    | Description                                    |
+| ------------------ | ------------------------------------------ | ---------------------------------------------- |
+| `enabled`          | `true`                                     | Enable serialized request pacing and cooldowns |
+| `minIntervalMs`    | `2500`                                     | Minimum time between starts of Google requests |
+| `cooldownMs`       | `60000`                                    | Fallback cooldown when recovery is disabled    |
+| `recovery`         | `true`                                     | Recover tokenized Explore flows after HTTP 429 |
+| `recoveryDelaysMs` | 1, 2, 3, 5, 10, 15, 20, 25, and 30 minutes | Delays before successive recovery attempts     |
+
+Automatic recovery applies to tokenized Explore operations. It waits for the relevant endpoint's
+cooldown, resets the cookie session, performs a fresh warm-up, and restarts the complete tokenized
+request flow. A caller can cancel this wait with its `AbortSignal`.
+
+For latency-sensitive applications, you can disable automatic recovery and handle
+`RateLimitError` yourself:
 
 ```ts
-const result = await trends.interestOverTime({
-  keywords: ['typescript', 'javascript'],
-  geo: 'PK',
-  timeRange: 'now 7-d',
-  category: 0,
-  property: '',
+const trends = createClient({
+  rateLimit: {
+    recovery: false,
+  },
 });
-
-console.log(result.timeline);
-console.log(result.averages);
 ```
 
-`keywords` accepts one value or up to five values. A topic machine ID returned by `autocomplete()` can also be used as a keyword.
+Disabling all rate-limit protection is possible but is not recommended for normal production use.
 
-## Interest by region
+### Cache options
+
+| Option           | Default                   | Description                                                   |
+| ---------------- | ------------------------- | ------------------------------------------------------------- |
+| `enabled`        | `true`                    | Enable result caching                                         |
+| `ttlMs`          | 15 minutes                | How long a successful result remains fresh                    |
+| `staleIfErrorMs` | 24 hours                  | How long an expired result remains eligible after a 429       |
+| `maxEntries`     | `100`                     | Maximum results kept in this client's in-memory L1 cache      |
+| `store`          | `undefined`               | Optional synchronous or asynchronous persistent cache adapter |
+| `keyPrefix`      | `'google-trends-api:v1:'` | Namespace used for persistent cache entries                   |
+
+Use a long-lived client instance to benefit from its session, request governor, deduplication, and
+cache. Creating a new client for every call defeats those protections.
+
+#### Persistent cache stores
+
+Add a `CacheStore` when several client instances, serverless invocations, or application processes
+need to reuse completed results. The package keeps its bounded in-memory cache as L1 and consults
+the supplied store as L2:
 
 ```ts
-import { INTEREST_BY_REGION_RESOLUTIONS, createClient } from '@arham-rumi/google-trends-api';
+import { createClient, type CacheStore } from '@arham-rumi/google-trends-api';
 
-console.log(INTEREST_BY_REGION_RESOLUTIONS);
+const store: CacheStore = {
+  async get(key) {
+    // Return the exact bytes previously passed to set(), or undefined on a miss.
+    return database.get(key);
+  },
+  async set(key, value, ttlMs) {
+    await database.set(key, value, { ttlMs });
+  },
+  async delete(key) {
+    await database.delete(key);
+  },
+  async clear(keyPrefix) {
+    await database.deleteByPrefix(keyPrefix);
+  },
+};
 
-const result = await trends.interestByRegion({
-  keywords: 'artificial intelligence',
-  geo: 'US',
-  resolution: 'REGION',
-  includeLowSearchVolumeGeos: true,
+const trends = createClient({
+  cache: {
+    store,
+    keyPrefix: 'my-service:google-trends:v1:',
+  },
 });
-
-console.log(result.regions);
 ```
 
-Supported resolutions are `COUNTRY`, `REGION`, `CITY`, and `DMA`. Availability depends on the selected geography and Google Trends data.
+The adapter must treat values as opaque `Uint8Array` bytes, preserve them exactly, and enforce the
+provided TTL. `clear(keyPrefix)` must delete only keys in that namespace. The package handles
+serialization, restores values such as `Date` objects, hashes request details into safe fixed-length
+keys, and removes invalid or expired persistent entries. Use a distinct `keyPrefix` when deployments
+must not share cached data.
 
-## Related queries
+Cache-store errors reject the request instead of silently bypassing the shared cache. This makes a
+broken adapter visible and avoids an unnoticed burst of requests to Google.
+
+## Caching, deduplication, and rate limits
+
+The default request path works as follows:
+
+1. Return a fresh cached result when available.
+2. Join an identical in-flight request rather than sending another Google request.
+3. Serialize and space outgoing requests.
+4. Cache successful results.
+5. Track HTTP 429 cooldowns per relevant Google endpoint.
+6. Return an eligible stale cached result during that endpoint's cooldown when possible.
+
+Inspect the source of a returned result with `getResultMetadata()`:
 
 ```ts
-const results = await trends.relatedQueries({
-  keywords: ['node.js', 'bun'],
-  geo: 'US',
-  timeRange: 'today 3-m',
-});
+import { getResultMetadata } from '@arham-rumi/google-trends-api';
 
-for (const result of results) {
-  console.log(result.keyword, result.top, result.rising);
-}
+const result = await trends.interestOverTime({ keywords: 'node.js' });
+const metadata = getResultMetadata(result);
+
+console.log(metadata);
+// {
+//   source: 'network' | 'cache' | 'stale-cache',
+//   stale: boolean,
+//   cachedAt?: Date
+// }
 ```
 
-## Related topics
+The metadata is attached out-of-band and does not alter Google's normalized result shape.
 
 ```ts
-const results = await trends.relatedTopics({
-  keywords: 'machine learning',
-  geo: 'US',
-});
+console.log(trends.cacheSize);
+console.log(trends.cooldownRemainingMs);
 
-console.log(results[0]?.top);
-console.log(results[0]?.rising);
+await trends.clearCache();
 ```
 
-## Trending Now
+- `cacheSize` is the number of entries in this client's in-memory L1 cache.
+- `cooldownRemainingMs` is the largest current endpoint cooldown observed by this client.
+- `clearCache()` clears L1 and the configured persistent-cache namespace. It does not reset cookies
+  or cooldowns.
 
-```ts
-const result = await trends.trendingNow({
-  geo: 'PK',
-  limit: 10,
-});
-
-for (const trend of result.trends) {
-  console.log(trend.title, trend.approxTraffic, trend.publishedAt);
-}
-```
-
-`geo` must be a two-letter country or territory code.
-
-## Autocomplete
-
-```ts
-const result = await trends.autocomplete({
-  keyword: 'tesla',
-  limit: 10,
-});
-
-for (const suggestion of result.suggestions) {
-  console.log(suggestion.kind, suggestion.title, suggestion.keyword);
-}
-```
-
-For topic suggestions, `suggestion.keyword` is the Google Knowledge Graph machine ID that can be passed to other methods.
-
-## Search properties
-
-```ts
-import { GOOGLE_TRENDS_PROPERTIES } from '@arham-rumi/google-trends-api';
-
-console.log(GOOGLE_TRENDS_PROPERTIES);
-```
-
-Valid `property` values are:
-
-| Value       | Search surface  |
-| ----------- | --------------- |
-| `''`        | Web Search      |
-| `'images'`  | Image Search    |
-| `'news'`    | News Search     |
-| `'youtube'` | YouTube Search  |
-| `'froogle'` | Google Shopping |
+Without a `store`, the cache is local to one client instance. A persistent store shares completed
+results, but it does not coordinate simultaneous misses between processes and does not bypass
+Google's rate limits. In-flight deduplication and request pacing remain client-local. Returned
+results are cloned, so changing one result does not mutate the cached value returned to another
+caller.
 
 ## Cancellation
 
@@ -226,7 +550,24 @@ const request = trends.interestOverTime({
 });
 
 controller.abort();
-await request;
+
+try {
+  await request;
+} catch (error) {
+  console.error(error);
+}
+```
+
+When identical callers share one in-flight request, canceling one caller does not cancel the other
+callers. The underlying request is aborted only after all consumers have canceled.
+
+You can also set a deadline without creating a controller:
+
+```ts
+await trends.trendingNow({
+  geo: 'US',
+  signal: AbortSignal.timeout(5_000),
+});
 ```
 
 ## Error handling
@@ -235,6 +576,7 @@ await request;
 import {
   GoogleTrendsError,
   RateLimitError,
+  RequestAbortedError,
   RequestTimeoutError,
   createClient,
 } from '@arham-rumi/google-trends-api';
@@ -243,9 +585,11 @@ try {
   await createClient().trendingNow({ geo: 'US' });
 } catch (error) {
   if (error instanceof RateLimitError) {
-    console.error('Rate limited. Retry later.', error.retryAfterMs);
+    console.error('Rate limited:', error.url, error.retryAfterMs);
   } else if (error instanceof RequestTimeoutError) {
-    console.error('Request timed out.');
+    console.error('Timed out:', error.url, error.timeoutMs);
+  } else if (error instanceof RequestAbortedError) {
+    console.error('Request canceled:', error.url);
   } else if (error instanceof GoogleTrendsError) {
     console.error(error.code, error.message);
   } else {
@@ -254,61 +598,200 @@ try {
 }
 ```
 
-Exported error classes include:
+| Error class            | Code               | Meaning                                               |
+| ---------------------- | ------------------ | ----------------------------------------------------- |
+| `HttpStatusError`      | `HTTP_STATUS`      | Non-success HTTP status other than the typed 429 case |
+| `RateLimitError`       | `RATE_LIMITED`     | Google returned HTTP 429                              |
+| `RequestTimeoutError`  | `REQUEST_TIMEOUT`  | An HTTP attempt exceeded its timeout                  |
+| `RequestAbortedError`  | `REQUEST_ABORTED`  | The request was canceled                              |
+| `NetworkError`         | `NETWORK_ERROR`    | The network request failed                            |
+| `InvalidResponseError` | `INVALID_RESPONSE` | Google's response could not be parsed or validated    |
+| `WidgetNotFoundError`  | `WIDGET_NOT_FOUND` | Explore omitted a required widget                     |
 
-- `HttpStatusError`
-- `RateLimitError`
-- `RequestTimeoutError`
-- `RequestAbortedError`
-- `NetworkError`
-- `InvalidResponseError`
-- `WidgetNotFoundError`
+Invalid local inputs such as an empty keyword, unsupported property, or non-positive limit throw a
+standard `RangeError` before making the affected Google request.
+
+Do not treat a `RateLimitError` as evidence of a parser bug. Wait for the suggested or configured
+cooldown and avoid immediate retry loops.
 
 ## CommonJS
 
 ```js
-const { createClient } = require('@arham-rumi/google-trends-api');
+const { createClient, getResultMetadata } = require('@arham-rumi/google-trends-api');
 
-const trends = createClient();
+(async () => {
+  const trends = createClient();
+  const result = await trends.trendingNow({ geo: 'US', limit: 5 });
+
+  console.log(result.trends);
+  console.log(getResultMetadata(result));
+})().catch(console.error);
 ```
 
-## Development
+## Production guidance
+
+### Reuse one client
+
+Create a client per configuration or service boundary and reuse it:
+
+```ts
+// trends.ts
+import { createClient } from '@arham-rumi/google-trends-api';
+
+export const trends = createClient({
+  locale: 'en-US',
+  cache: {
+    ttlMs: 30 * 60_000,
+    maxEntries: 250,
+  },
+});
+```
+
+This preserves cookies and lets related calls share pacing, cooldowns, cache entries, and in-flight
+requests.
+
+### Warm-up is normally automatic
+
+Explore operations warm up the Google session lazily when Google returns a session or challenge
+response. Most applications do not need to call `warmup()` manually.
+
+Call it during startup only when you intentionally want to establish the session early:
+
+```ts
+await trends.warmup();
+```
+
+### Choose cache settings for your data freshness
+
+- Use a longer `ttlMs` for dashboards that do not need minute-by-minute updates.
+- Keep `staleIfErrorMs` long enough to serve useful fallback data during a temporary 429.
+- Keep `maxEntries` bounded when accepting arbitrary user-supplied comparisons.
+- Supply a persistent `CacheStore` when multiple processes or serverless invocations should reuse
+  completed results.
+- Reuse one client inside each process: persistent caching does not yet provide distributed locking,
+  shared in-flight deduplication, or shared cooldown state.
+
+### Preserve Google semantics
+
+- Display `formattedValue` when Google provides labels such as `Breakout`.
+- Respect `hasData` and `isPartial` instead of converting them into zero or complete data.
+- Expect valid empty related-query/topic lists.
+- Do not interpret normalized scores as absolute traffic.
+- Store the query inputs alongside cached or persisted results; normalization depends on the entire
+  comparison.
+
+### Custom networking
+
+Advanced users can provide a fetch-compatible function for controlled networking, instrumentation,
+or tests:
+
+```ts
+const trends = createClient({
+  fetch: async (input, init) => {
+    const startedAt = Date.now();
+
+    try {
+      return await fetch(input, init);
+    } finally {
+      console.log('Google Trends request duration:', Date.now() - startedAt);
+    }
+  },
+});
+```
+
+The custom function must behave like native `fetch` and return a standard `Response`. Do not strip
+cookies, abort signals, or request headers supplied by the client.
+
+## Development and verification
+
+Install dependencies and run the deterministic project gate:
 
 ```bash
 npm install
 npm run check
 ```
 
-Run the repository example after building:
+Useful deterministic commands:
+
+| Command                 | Purpose                                           |
+| ----------------------- | ------------------------------------------------- |
+| `npm run format:check`  | Check Prettier formatting                         |
+| `npm run lint`          | Run ESLint                                        |
+| `npm run typecheck`     | Run TypeScript without emitting files             |
+| `npm test`              | Run deterministic Vitest tests                    |
+| `npm run package:check` | Build and validate package/types                  |
+| `npm run test:package`  | Test packed ESM and CommonJS consumers            |
+| `npm run release:check` | Run the complete pre-release gate and npm dry run |
+
+Build and run the basic example:
 
 ```bash
 npm run build
 node examples/basic.mjs
 ```
 
-Run the opt-in live integration suite:
+### Live checks
 
-```bash
-npm run test:integration
-```
-
-Run the broad real-data smoke test against the built package:
+Live checks call Google and are intentionally separate from deterministic CI. Run them sparingly:
 
 ```bash
 npm run smoke:live
+npm run verify:live
 ```
 
-Run the deep Interest Over Time validator, which compares parsed package output with the raw Google timeline response for the same request:
+Individual deep validators:
 
 ```bash
 npm run verify:interest-live
+npm run verify:region-live
+npm run verify:related-queries-live
+npm run verify:related-topics-live
+npm run verify:trending-live
+npm run verify:autocomplete-live
 ```
 
-The live checks call Google endpoints and may fail when Google changes an endpoint, presents a challenge page, or rate-limits the runner. They intentionally remain separate from the deterministic unit-test pipeline. GitHub Actions runs the live integration suite weekly and also supports manual runs.
+The deep validators compare package output with the raw Google response for the same request. The
+Interest Over Time validator also checks per-comparison geography by default. Override its list by
+supplying one comma-separated geography per keyword:
+
+```powershell
+$env:GOOGLE_TRENDS_TEST_COMPARISON_GEOS="US,GB"
+npm run verify:interest-live
+```
+
+Verify the exact package installed from npm in a clean temporary project:
+
+```bash
+npm run verify:published
+```
+
+Live validator exit codes are:
+
+- `0`: passed
+- `1`: request, parser, or validation failure
+- `2`: rate-limited/inconclusive
+
+A live check may fail because Google changed an endpoint, presented a challenge page, temporarily
+blocked the runner's IP, or returned HTTP 429. Do not weaken a validator merely to make it pass;
+first determine whether Google changed behavior, the validator made an invalid assumption, or the
+package has a real bug.
 
 ## Limitations and responsible use
 
-Google Trends does not provide these internal endpoints as a stable public contract. Responses, tokens, rate limits, or endpoint behavior can change. Applications should handle errors, cache appropriate results, avoid high-frequency polling, and comply with applicable Google terms and policies.
+- Google does not offer these web endpoints as a stable public API contract.
+- Response schemas, widget availability, tokens, URLs, and rate-limit behavior may change.
+- Results vary by geography, language, time, and Google's sampling.
+- Low-volume searches and optional fields may be omitted.
+- The Trending Now method reflects the RSS feed rather than every interactive UI feature.
+- This library does not provide absolute search volume or Google Ads data.
+
+Applications should handle typed errors, cache appropriate results, avoid high-frequency polling,
+respect cooldowns, and comply with applicable Google terms and policies.
+
+## Collaboration and contact
+
+Contributions, implementation ideas, bug reports, and collaboration proposals are welcome. To
+discuss working together on this project, contact [info@arhamrumi.com](mailto:info@arhamrumi.com).
 
 ## License
 

@@ -1,4 +1,4 @@
-import { MemoryCache } from './cache/memory-cache.js';
+import { ResultCache } from './cache/result-cache.js';
 import type { CacheLookup, ResolvedCacheOptions } from './cache/types.js';
 import { HttpStatusError, InvalidResponseError, RateLimitError } from './errors.js';
 import {
@@ -43,6 +43,7 @@ import { attachResultMetadata, type ResultMetadata } from './result-metadata.js'
 import type { GoogleTrendsClientOptions, ResolvedGoogleTrendsClientOptions } from './types.js';
 
 const GOOGLE_TRENDS_BASE_URL = 'https://trends.google.com';
+const DEFAULT_CACHE_KEY_PREFIX = 'google-trends-api:v1:';
 
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -77,6 +78,8 @@ function resolveCacheOptions(
     ttlMs: options.ttlMs ?? 15 * 60_000,
     staleIfErrorMs: options.staleIfErrorMs ?? 24 * 60 * 60_000,
     maxEntries: options.maxEntries ?? 100,
+    keyPrefix: options.keyPrefix ?? DEFAULT_CACHE_KEY_PREFIX,
+    ...(options.store === undefined ? {} : { store: options.store }),
   };
 
   if (!Number.isFinite(resolved.ttlMs) || resolved.ttlMs < 0) {
@@ -89,6 +92,20 @@ function resolveCacheOptions(
 
   if (!Number.isInteger(resolved.maxEntries) || resolved.maxEntries <= 0) {
     throw new RangeError('cache.maxEntries must be a positive integer.');
+  }
+
+  if (resolved.keyPrefix.length === 0) {
+    throw new RangeError('cache.keyPrefix cannot be empty.');
+  }
+
+  if (
+    resolved.store !== undefined &&
+    (typeof resolved.store.get !== 'function' ||
+      typeof resolved.store.set !== 'function' ||
+      typeof resolved.store.delete !== 'function' ||
+      typeof resolved.store.clear !== 'function')
+  ) {
+    throw new TypeError('cache.store must implement get, set, delete, and clear.');
   }
 
   return resolved;
@@ -155,13 +172,13 @@ export class GoogleTrendsClient {
   public readonly options: Readonly<ResolvedGoogleTrendsClientOptions>;
 
   readonly #session: HttpSession;
-  readonly #cache: MemoryCache;
+  readonly #cache: ResultCache;
   readonly #inflight = new Map<string, InflightEntry<object>>();
   #warmupPromise: Promise<void> | undefined;
 
   public constructor(options: GoogleTrendsClientOptions = {}) {
     this.options = Object.freeze(resolveOptions(options));
-    this.#cache = new MemoryCache(this.options.cache);
+    this.#cache = new ResultCache(this.options.cache);
     this.#session = new HttpSession({
       baseUrl: GOOGLE_TRENDS_BASE_URL,
       timeoutMs: this.options.timeoutMs,
@@ -189,8 +206,8 @@ export class GoogleTrendsClient {
     return this.#session.cooldownRemainingMs;
   }
 
-  public clearCache(): void {
-    this.#cache.clear();
+  public clearCache(): Promise<void> {
+    return this.#cache.clear();
   }
 
   #createWarmupOptions(signal?: AbortSignal): HttpSessionWarmupOptions {
@@ -335,6 +352,47 @@ export class GoogleTrendsClient {
     return paths.some((path) => this.#session.getCooldownRemainingMs(path) > 0);
   }
 
+  async #executeOperation<T extends object>(
+    options: {
+      method: string;
+      input: { signal?: AbortSignal };
+      tokenized: boolean;
+      rateLimitPaths: readonly (string | URL)[];
+      operation: (signal: AbortSignal) => Promise<T>;
+    },
+    key: string,
+    signal: AbortSignal,
+  ): Promise<OperationOutcome<T>> {
+    const cached = await this.#cache.get<T>(key);
+    signal.throwIfAborted();
+
+    if (cached?.state === 'fresh') {
+      return this.#cacheOutcome(cached);
+    }
+
+    if (cached?.state === 'stale' && this.#hasRelevantCooldown(options.rateLimitPaths)) {
+      return this.#cacheOutcome(cached);
+    }
+
+    try {
+      const value = options.tokenized
+        ? await this.#runTokenized(options.operation, signal, cached?.state !== 'stale')
+        : await options.operation(signal);
+
+      await this.#cache.set(key, value);
+      return {
+        value,
+        source: 'network',
+      };
+    } catch (error) {
+      if (error instanceof RateLimitError && cached?.state === 'stale') {
+        return this.#cacheOutcome(cached);
+      }
+
+      throw error;
+    }
+  }
+
   #execute<T extends object>(options: {
     method: string;
     input: { signal?: AbortSignal };
@@ -350,15 +408,6 @@ export class GoogleTrendsClient {
       timezone: this.options.timezone,
       input: withoutSignal(options.input),
     });
-    const cached = this.#cache.get<T>(key);
-
-    if (cached?.state === 'fresh') {
-      return Promise.resolve(this.#materialize(this.#cacheOutcome(cached)));
-    }
-
-    if (cached?.state === 'stale' && this.#hasRelevantCooldown(options.rateLimitPaths)) {
-      return Promise.resolve(this.#materialize(this.#cacheOutcome(cached)));
-    }
 
     const existing = this.#inflight.get(key) as InflightEntry<T> | undefined;
 
@@ -367,29 +416,7 @@ export class GoogleTrendsClient {
     }
 
     const controller = new AbortController();
-    const promise = (async (): Promise<OperationOutcome<T>> => {
-      try {
-        const value = options.tokenized
-          ? await this.#runTokenized(
-              options.operation,
-              controller.signal,
-              cached?.state !== 'stale',
-            )
-          : await options.operation(controller.signal);
-
-        this.#cache.set(key, value);
-        return {
-          value,
-          source: 'network',
-        };
-      } catch (error) {
-        if (error instanceof RateLimitError && cached?.state === 'stale') {
-          return this.#cacheOutcome(cached);
-        }
-
-        throw error;
-      }
-    })();
+    const promise = this.#executeOperation(options, key, controller.signal);
     const entry: InflightEntry<T> = {
       controller,
       promise,

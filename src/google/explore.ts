@@ -16,6 +16,39 @@ export interface ExploreComparisonItemInput {
   time: string;
 }
 
+/** One comparison series with optional per-series Explore filters. */
+export interface GoogleTrendsComparisonItem {
+  keyword: string;
+  /** Google Trends geo code. Overrides the operation-level geo when provided. */
+  geo?: string;
+  /** Google Trends time expression. Overrides the operation-level time range when provided. */
+  timeRange?: string;
+}
+
+export interface GoogleTrendsKeywordComparisonInput {
+  /** One keyword or up to five keywords using the same filters. */
+  keywords: string | readonly string[];
+  comparisonItems?: never;
+  /** Default Google Trends geo code for every keyword. */
+  geo?: string;
+  /** Default Google Trends time expression for every keyword. */
+  timeRange?: string;
+}
+
+export interface GoogleTrendsItemComparisonInput {
+  /** One or up to five comparison series with optional per-series filter overrides. */
+  comparisonItems: readonly GoogleTrendsComparisonItem[];
+  keywords?: never;
+  /** Default Google Trends geo code for comparison items that omit geo. */
+  geo?: string;
+  /** Default time expression for comparison items that omit timeRange. */
+  timeRange?: string;
+}
+
+/** Selects either the shorthand keyword input or explicit per-series comparison items. */
+export type GoogleTrendsComparisonInput =
+  GoogleTrendsKeywordComparisonInput | GoogleTrendsItemComparisonInput;
+
 export interface ExploreRequestInput {
   comparisonItems: readonly ExploreComparisonItemInput[];
   locale: string;
@@ -65,6 +98,40 @@ function requireNonEmptyString(value: string, fieldName: string): string {
 
 function parseOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+export function buildExploreComparisonItems(
+  input: GoogleTrendsComparisonInput,
+  defaultTimeRange: string,
+): ExploreComparisonItemInput[] {
+  const explicitItems = input.comparisonItems;
+  const rawKeywords = input.keywords;
+
+  if ((explicitItems === undefined) === (rawKeywords === undefined)) {
+    throw new RangeError('Provide exactly one of keywords or comparisonItems.');
+  }
+
+  const globalGeo = input.geo?.trim() ?? '';
+  const globalTimeRange = requireNonEmptyString(input.timeRange ?? defaultTimeRange, 'timeRange');
+  const items: readonly GoogleTrendsComparisonItem[] =
+    explicitItems ??
+    (Array.isArray(rawKeywords) ? rawKeywords : [rawKeywords]).map((keyword) => ({ keyword }));
+  const fieldName = explicitItems === undefined ? 'keywords' : 'comparisonItems';
+
+  if (items.length === 0 || items.length > MAX_EXPLORE_COMPARISON_ITEMS) {
+    throw new RangeError(
+      `${fieldName} must contain between 1 and ${MAX_EXPLORE_COMPARISON_ITEMS} items.`,
+    );
+  }
+
+  return items.map((item, index) => ({
+    keyword: requireNonEmptyString(item.keyword, `${fieldName}[${index}].keyword`),
+    geo: item.geo === undefined ? globalGeo : item.geo.trim(),
+    time: requireNonEmptyString(
+      item.timeRange ?? globalTimeRange,
+      `${fieldName}[${index}].timeRange`,
+    ),
+  }));
 }
 
 function parseExploreWidget(value: unknown, url: string, index: number): ExploreWidget | undefined {

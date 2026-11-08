@@ -26,7 +26,10 @@ function readIntegerEnv(name, fallback) {
 }
 
 function parseKeywords() {
-  const raw = readNonEmptyEnv('GOOGLE_TRENDS_TEST_KEYWORDS', 'typescript,javascript');
+  const raw = readNonEmptyEnv(
+    'whatsapp automations,real estate automations',
+    'whatsapp automations,real estate automations',
+  );
   const keywords = raw
     .split(',')
     .map((keyword) => keyword.trim())
@@ -37,6 +40,28 @@ function parseKeywords() {
   }
 
   return keywords;
+}
+
+function parseComparisonGeos(keywords, fallbackGeo) {
+  const raw = process.env.GOOGLE_TRENDS_TEST_COMPARISON_GEOS?.trim();
+
+  if (raw) {
+    const geos = raw
+      .split(',')
+      .map((geo) => geo.trim().toUpperCase())
+      .filter(Boolean);
+
+    if (geos.length !== keywords.length) {
+      throw new RangeError(
+        'GOOGLE_TRENDS_TEST_COMPARISON_GEOS must contain one value per keyword.',
+      );
+    }
+
+    return geos;
+  }
+
+  const alternateGeo = fallbackGeo === 'US' ? 'GB' : 'US';
+  return keywords.map((_keyword, index) => (index === 0 ? fallbackGeo : alternateGeo));
 }
 
 function parseGoogleJson(text) {
@@ -73,11 +98,11 @@ function findSuccessfulCapture(captures, pathname) {
   return capture;
 }
 
-function buildManualCheckUrl({ keywords, geo, timeRange, category, property }) {
+function buildManualCheckUrl({ keyword, geo, timeRange, category, property }) {
   const url = new URL('/trends/explore', GOOGLE_TRENDS_BASE_URL);
   url.searchParams.set('date', timeRange);
   url.searchParams.set('geo', geo);
-  url.searchParams.set('q', keywords.join(','));
+  url.searchParams.set('q', keyword);
 
   if (category !== 0) {
     url.searchParams.set('cat', String(category));
@@ -320,6 +345,12 @@ function toReportPoint(point) {
 const keywords = parseKeywords();
 const geo = readNonEmptyEnv('GOOGLE_TRENDS_TEST_GEO', 'US').toUpperCase();
 const timeRange = readNonEmptyEnv('GOOGLE_TRENDS_TEST_TIME_RANGE', 'today 3-m');
+const comparisonGeos = parseComparisonGeos(keywords, geo);
+const comparisonItems = keywords.map((keyword, index) => ({
+  keyword,
+  geo: comparisonGeos[index],
+  timeRange,
+}));
 const locale = readNonEmptyEnv('GOOGLE_TRENDS_TEST_LOCALE', 'en-US');
 const timezone = readIntegerEnv('GOOGLE_TRENDS_TEST_TIMEZONE', 0);
 const category = readIntegerEnv('GOOGLE_TRENDS_TEST_CATEGORY', 0);
@@ -364,16 +395,18 @@ try {
   await client.warmup();
 
   const result = await client.interestOverTime({
-    keywords,
-    geo,
-    timeRange,
+    comparisonItems,
     category,
     property,
   });
 
   const exploreCapture = findSuccessfulCapture(captures, EXPLORE_API_PATH);
   const timelineCapture = findSuccessfulCapture(captures, TIMELINE_API_PATH);
-  const comparisonItems = keywords.map((keyword) => ({ keyword, geo, time: timeRange }));
+  const expectedComparisonItems = comparisonItems.map(({ keyword, geo, timeRange }) => ({
+    keyword,
+    geo,
+    time: timeRange,
+  }));
 
   validateRequestInputs({
     exploreCapture,
@@ -381,7 +414,7 @@ try {
     expected: {
       locale,
       timezone,
-      comparisonItems,
+      comparisonItems: expectedComparisonItems,
       category,
       property,
     },
@@ -409,9 +442,7 @@ try {
       metadata,
     },
     input: {
-      keywords,
-      geo,
-      timeRange,
+      comparisonItems,
       locale,
       timezone,
       category,
@@ -436,7 +467,9 @@ try {
       timelineStatus: timelineCapture.status,
       timelineContentType: timelineCapture.contentType,
     },
-    manualCheckUrl: buildManualCheckUrl({ keywords, geo, timeRange, category, property }),
+    manualCheckUrls: comparisonItems.map((item) =>
+      buildManualCheckUrl({ ...item, category, property }),
+    ),
   };
 
   console.log(JSON.stringify(report, null, 2));
@@ -446,9 +479,7 @@ try {
     startedAt: startedAt.toISOString(),
     completedAt: new Date().toISOString(),
     input: {
-      keywords,
-      geo,
-      timeRange,
+      comparisonItems,
       locale,
       timezone,
       category,

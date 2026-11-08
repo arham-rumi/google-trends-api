@@ -29,6 +29,7 @@ describe('createClient', () => {
         ttlMs: 900_000,
         staleIfErrorMs: 86_400_000,
         maxEntries: 100,
+        keyPrefix: 'google-trends-api:v1:',
       },
     });
 
@@ -43,6 +44,7 @@ describe('createClient', () => {
     expect(() => createClient({ rateLimit: { minIntervalMs: -1 } })).toThrow(RangeError);
     expect(() => createClient({ rateLimit: { recoveryDelaysMs: [-1] } })).toThrow(RangeError);
     expect(() => createClient({ cache: { maxEntries: 0 } })).toThrow(RangeError);
+    expect(() => createClient({ cache: { keyPrefix: '' } })).toThrow(RangeError);
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { InvalidResponseError, WidgetNotFoundError } from '../src/errors.js';
 import {
+  buildExploreComparisonItems,
   buildExploreRequest,
   fetchExploreWidgets,
   findExploreWidget,
@@ -22,6 +23,41 @@ function responseWithUrl(body: string, url: string): Response {
 }
 
 describe('Google Explore flow', () => {
+  it('normalizes explicit comparison items with shared defaults and per-item overrides', () => {
+    expect(
+      buildExploreComparisonItems(
+        {
+          comparisonItems: [
+            { keyword: ' TypeScript ', geo: ' US ' },
+            { keyword: ' JavaScript ', timeRange: ' now 7-d ' },
+          ],
+          geo: 'GB',
+          timeRange: 'today 3-m',
+        },
+        'today 12-m',
+      ),
+    ).toEqual([
+      { keyword: 'TypeScript', geo: 'US', time: 'today 3-m' },
+      { keyword: 'JavaScript', geo: 'GB', time: 'now 7-d' },
+    ]);
+  });
+
+  it('requires exactly one comparison input form', () => {
+    expect(() =>
+      buildExploreComparisonItems(
+        {
+          keywords: ['TypeScript'],
+          comparisonItems: [{ keyword: 'JavaScript' }],
+        } as never,
+        'today 12-m',
+      ),
+    ).toThrow('Provide exactly one of keywords or comparisonItems.');
+
+    expect(() => buildExploreComparisonItems({ comparisonItems: [] }, 'today 12-m')).toThrow(
+      'comparisonItems must contain between 1 and 5 items.',
+    );
+  });
+
   it('builds a normalized Explore request without mutating input', () => {
     const comparisonItems = [
       {

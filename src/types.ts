@@ -97,4 +97,9 @@ export interface ResolvedGoogleTrendsClientOptions {
   cache: Readonly<ResolvedCacheOptions>;
 }
 
-export type { CacheOptions, ResolvedCacheOptions } from './cache/types.js';
+export type {
+  CacheOptions,
+  CacheStore,
+  CacheStoreResult,
+  ResolvedCacheOptions,
+} from './cache/types.js';

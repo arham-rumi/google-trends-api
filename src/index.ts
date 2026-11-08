@@ -39,6 +39,13 @@ export { GOOGLE_TRENDS_PROPERTIES } from './google/constants.js';
 export type { GoogleTrendsProperty } from './google/constants.js';
 
 export type {
+  GoogleTrendsComparisonInput,
+  GoogleTrendsComparisonItem,
+  GoogleTrendsItemComparisonInput,
+  GoogleTrendsKeywordComparisonInput,
+} from './google/explore.js';
+
+export type {
   AutocompleteOptions,
   AutocompleteResult,
   AutocompleteSuggestion,
@@ -62,6 +69,8 @@ export type {
 
 export type {
   CacheOptions,
+  CacheStore,
+  CacheStoreResult,
   FetchLike,
   GoogleTrendsClientOptions,
   HttpHeadersInit,

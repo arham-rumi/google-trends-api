@@ -6,7 +6,7 @@ import {
   parseInterestOverTimeResponse,
 } from '../src/google/interest-over-time.js';
 import { createClient, getResultMetadata } from '../src/index.js';
-import type { FetchLike } from '../src/types.js';
+import type { CacheStore, FetchLike } from '../src/types.js';
 
 function responseWithUrl(body: string, url: string, init: ResponseInit = {}): Response {
   const response = new Response(body, init);
@@ -37,6 +37,21 @@ describe('interestOverTime', () => {
         geo: 'US',
         time: 'today 12-m',
       },
+    ]);
+  });
+
+  it('supports per-comparison geography and time ranges', () => {
+    expect(
+      buildInterestOverTimeComparisonItems({
+        comparisonItems: [
+          { keyword: ' TypeScript ', geo: ' US ' },
+          { keyword: ' JavaScript ', geo: ' GB ', timeRange: ' now 7-d ' },
+        ],
+        timeRange: 'today 3-m',
+      }),
+    ).toEqual([
+      { keyword: 'TypeScript', geo: 'US', time: 'today 3-m' },
+      { keyword: 'JavaScript', geo: 'GB', time: 'now 7-d' },
     ]);
   });
 
@@ -278,6 +293,85 @@ describe('interestOverTime', () => {
     expect(requestedUrls).toHaveLength(2);
     expect(getResultMetadata(cached)).toMatchObject({ source: 'cache', stale: false });
     expect(cached).toEqual(first);
+  });
+
+  it('reuses a persistent cache store across client instances', async () => {
+    const entries = new Map<string, Uint8Array>();
+    const store: CacheStore = {
+      get: async (key) => entries.get(key)?.slice(),
+      set: async (key, value) => {
+        entries.set(key, value.slice());
+      },
+      delete: async (key) => {
+        entries.delete(key);
+      },
+      clear: async (keyPrefix) => {
+        for (const key of entries.keys()) {
+          if (key.startsWith(keyPrefix)) {
+            entries.delete(key);
+          }
+        }
+      },
+    };
+    let requestCount = 0;
+    const fakeFetch: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      requestCount += 1;
+
+      if (url.pathname === '/trends/api/explore') {
+        return responseWithUrl(
+          `)]}',\n${JSON.stringify({
+            widgets: [
+              {
+                id: 'TIMESERIES',
+                token: 'timeline-token',
+                request: { time: 'today 12-m', requestOptions: {} },
+              },
+            ],
+          })}`,
+          url.toString(),
+        );
+      }
+
+      return responseWithUrl(
+        `)]}',\n${JSON.stringify({
+          default: {
+            timelineData: [
+              {
+                time: '1711929600',
+                formattedTime: 'Apr 1, 2024',
+                value: [80],
+                hasData: [true],
+                formattedValue: ['80'],
+              },
+            ],
+            averages: [80],
+          },
+        })}`,
+        url.toString(),
+      );
+    };
+    const options = {
+      retries: 0,
+      rateLimit: { minIntervalMs: 0 },
+      cache: { store, keyPrefix: 'integration-test:' },
+      fetch: fakeFetch,
+    } as const;
+    const input = { keywords: 'TypeScript', geo: 'US' } as const;
+    const firstClient = createClient(options);
+    const first = await firstClient.interestOverTime(input);
+    const secondClient = createClient(options);
+    const second = await secondClient.interestOverTime(input);
+
+    expect(requestCount).toBe(2);
+    expect(entries.size).toBe(1);
+    expect(getResultMetadata(first)).toEqual({ source: 'network', stale: false });
+    expect(getResultMetadata(second)).toMatchObject({ source: 'cache', stale: false });
+    expect(second.timeline[0]?.date).toBeInstanceOf(Date);
+    expect(second).toEqual(first);
+
+    await secondClient.clearCache();
+    expect(entries.size).toBe(0);
   });
 
   it('returns stale cached data on 429 and avoids requests during cooldown', async () => {
