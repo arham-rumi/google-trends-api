@@ -35,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   adaptive pacing, budget rejection, and circuit transitions.
 - Added immutable `getMetrics()` snapshots with cumulative counters and live gauges, plus
   `resetMetrics()` and listener-error isolation.
+- Added `createRedisCacheStore()` with binary-safe persistent caching, incremental namespace
+  clearing, and atomic owner-checked coordination leases for node-redis, ioredis, and compatible
+  command executors.
 
 ### Changed
 
@@ -55,6 +58,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   circuit-fallback coverage.
 - Added deterministic event, metric, reset, immutability, in-flight, and listener-isolation
   coverage.
+- Added deterministic Redis adapter coverage for binary payloads, TTLs, atomic lock scripts,
+  namespace scans, bounded deletion, and invalid responses.
 
 ## 0.2.4 - 2026-08-08
 

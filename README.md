@@ -599,6 +599,68 @@ when all three methods are present. It provides:
 - Shared serialization and minimum start spacing for every underlying HTTP request, including the
   separate Explore and data requests made by one high-level operation.
 
+#### Redis adapter
+
+`createRedisCacheStore()` supplies the persistent cache and all atomic coordination methods. It
+accepts a raw command executor, so the package does not force a Redis client dependency or own the
+connection lifecycle.
+
+With [`node-redis`](https://www.npmjs.com/package/redis):
+
+```ts
+import { createClient as createRedisClient } from 'redis';
+import { createClient, createRedisCacheStore } from '@arham-rumi/google-trends-api';
+
+const redis = createRedisClient({ url: process.env.REDIS_URL });
+await redis.connect();
+
+const store = createRedisCacheStore({
+  sendCommand: (command) => redis.sendCommand([...command]),
+});
+
+const trends = createClient({
+  cache: {
+    store,
+    keyPrefix: 'my-service:google-trends:v1:',
+  },
+});
+```
+
+With [`ioredis`](https://www.npmjs.com/package/ioredis):
+
+```ts
+import Redis from 'ioredis';
+import { createClient, createRedisCacheStore } from '@arham-rumi/google-trends-api';
+
+const redis = new Redis(process.env.REDIS_URL);
+
+const store = createRedisCacheStore({
+  sendCommand: ([name, ...args]) => {
+    if (name === undefined) throw new Error('Missing Redis command name');
+    return redis.call(name, ...args);
+  },
+});
+
+const trends = createClient({ cache: { store } });
+```
+
+The adapter Base64-encodes opaque cache bytes, applies millisecond TTLs with `PX`, acquires leases
+with `SET NX`, and uses owner-checked Lua scripts to refresh or release them atomically. Namespace
+clears use incremental `SCAN` calls and bounded deletion batches instead of blocking Redis with
+`KEYS`.
+
+| Redis adapter option | Default    | Description                                               |
+| -------------------- | ---------- | --------------------------------------------------------- |
+| `sendCommand`        | Required   | Executes one raw Redis command                            |
+| `scanCount`          | `100`      | Approximate keys requested by each namespace `SCAN`       |
+| `deleteBatchSize`    | `100`      | Maximum keys removed by each deletion command             |
+| `deleteCommand`      | `'UNLINK'` | Non-blocking delete; use `'DEL'` for older Redis versions |
+
+Keep the Redis connection alive for as long as the Trends clients use the store, and close it in
+your application's shutdown path. `clear()` scans the endpoint reached by `sendCommand`; Redis
+Cluster deployments that need namespace clearing across every primary should provide a
+cluster-aware command executor or a custom `CoordinatedCacheStore`.
+
 Tune or disable it with:
 
 ```ts
@@ -878,8 +940,8 @@ await trends.warmup();
 - Keep `maxEntries` bounded when accepting arbitrary user-supplied comparisons.
 - Supply a persistent `CacheStore` when multiple processes or serverless invocations should reuse
   completed results.
-- Implement `CoordinatedCacheStore` atomic leases to deduplicate identical cross-process misses and
-  share endpoint cooldowns and request pacing.
+- Use `createRedisCacheStore()` or implement `CoordinatedCacheStore` atomic leases to deduplicate
+  identical cross-process misses and share endpoint cooldowns and request pacing.
 - Reuse one client inside each process; cookie sessions remain process-local.
 
 ### Preserve Google semantics

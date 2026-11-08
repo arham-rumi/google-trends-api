@@ -3,6 +3,13 @@ export { GoogleTrendsClient, createClient } from './client.js';
 export { getResultMetadata } from './result-metadata.js';
 export type { ResultMetadata, ResultSource } from './result-metadata.js';
 
+export { RedisCacheStore, createRedisCacheStore } from './cache/redis-store.js';
+export type {
+  RedisCacheStoreOptions,
+  RedisCommandExecutor,
+  RedisDeleteCommand,
+} from './cache/redis-store.js';
+
 export {
   GoogleTrendsError,
   HttpStatusError,
